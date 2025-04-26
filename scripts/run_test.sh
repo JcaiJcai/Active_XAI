@@ -1,0 +1,17 @@
+python3 main.py --project=test \
+--h5_folder_name=h5_files_labels \
+--model_path=/u/jcai1/code/usefulxai/code/my_method/results \
+--k_fold=3 \
+--teacher_init=/u/jcai1/code/usefulxai/code/my_method/results/transmil_0405/fold_0_model_best_auc.pt \
+--mask_ratio_h=0.03 \
+--mask_ratio_hr=0.5 \
+--mrh_sche \
+--mask_ratio=0. \
+--mask_ratio_l=0.8 \
+--cl_alpha=0.1 \
+--mm_sche \
+--init_stu_type=fc \
+--attn_layer=0 \
+--explanation=attention \
+--seed=2021 \
+--num_epoch=1
