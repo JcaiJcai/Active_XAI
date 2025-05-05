@@ -56,11 +56,11 @@ def one_fold(args,k,ckc_metric,dataset):
     test_loader = get_split_loader(test_dataset, args.batch_size, testing = args.testing)
     print('Done!')
     print(len(val_loader))
-    try:
-        first_batch = next(iter(val_loader))
-        print("val_loader 有数据")
-    except StopIteration:
-        print("[WARNING] val_loader 是空的（StopIteration）")
+    # try:
+    #     first_batch = next(iter(val_loader))
+    #     print("val_loader 有数据")
+    # except StopIteration:
+    #     print("[WARNING] val_loader 是空的（StopIteration）")
     
     mm_sche = None
     # 加载之前训练好的某折的模型作为初始的teacher模型

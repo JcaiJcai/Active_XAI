@@ -31,8 +31,8 @@ def main(args):
     if args.datasets == 'camelyon16':
         args.n_classes=2
         args.task = "task_1_tumor_vs_normal"
-        dataset = Generic_MIL_Dataset(csv_path = '/u/jcai1/code/usefulxai/code/CLAM/dataset_csv/tumor_vs_normal_dummy_my.csv',
-                                data_dir= '/u/jcai1/code/usefulxai/data/camelyon16-clam/tumor_vs_normal_resnet_features',
+        dataset = Generic_MIL_Dataset(csv_path = '/home/sajjad/jie_project/data/tumor_vs_normal_dummy_my.csv',
+                                data_dir= '/home/sajjad/dataset/Camelyon16',
                                 h5_folder_name = args.h5_folder_name,
                                 use_h5 = args.use_h5,
                                 shuffle = False, 

@@ -4,6 +4,9 @@ from torch import nn
 from modules.datten import *
 import torch.nn.functional as F
 from modules.satten import *
+from modules.clam import Attn_Net, Attn_Net_Gated
+from .topk.svm import SmoothTop1SVM
+
 
 def initialize_weights(module):
     for m in module.modules():
@@ -64,9 +67,22 @@ class MHIM(nn.Module):
             self.online_encoder = DAttention(mlp_dim,da_act)
         elif baseline == 'dsmil': # DSMIL
             self.online_encoder = DSMIL(mlp_dim=mlp_dim,mask_ratio=mask_ratio)
+        elif baseline == 'clam_sb': # SAJ CLAM
+            self.online_encoder = Attn_Net_Gated(L=mlp_dim, D=mlp_dim//2, dropout=False, n_classes=1)
+        elif baseline == 'clam_mb': # SAJ CLAM
+            self.online_encoder = Attn_Net_Gated(L=mlp_dim, D=mlp_dim//2, dropout=False, n_classes=n_classes)
+        
+        if baseline == 'clam_mb':
+            bag_classifiers = [nn.Linear(mlp_dim, 1) for i in range(n_classes)] #use an indepdent linear layer to predict each class
+            self.predictor = nn.ModuleList(bag_classifiers)
+        else:
+            self.predictor = nn.Linear(mlp_dim,n_classes)
 
-        self.predictor = nn.Linear(mlp_dim,n_classes)
-
+        if baseline == 'clam_sb':
+            instance_classifiers = [nn.Linear(mlp_dim, 2) for i in range(n_classes)]
+            self.instance_classifiers = nn.ModuleList(instance_classifiers)
+            self.k_sample = 8 # SAJ hardcoded for now 
+            self.instance_loss_fn = SmoothTop1SVM(2).to("cuda") # SAJ hardcoded for now
         # 设置 teacher 和 student 的 softmax 温度（用于 CL）
         self.temp_t = temp_t
         self.temp_s = temp_s
@@ -239,10 +255,29 @@ class MHIM(nn.Module):
         if return_attn:
             x,a = self.online_encoder(x,return_attn=True,no_norm=no_norm)
         else:
-            x = self.online_encoder(x)
+            if self.baseline in ["clam_sb", "clam_mb"]:
+                x = self.online_encoder(x.squeeze())
+            else:
+                x = self.online_encoder(x)
 
         if self.baseline == 'dsmil':
             pass
+        elif self.baseline == "clam_sb":
+            A, h = x  # NxK        
+            A = torch.transpose(A, 1, 0)  # KxN
+            A = F.softmax(A, dim=1)  # softmax over N
+            M = torch.mm(A, h) 
+            x = self.predictor(M)
+        elif self.baseline == "clam_mb":
+            A, h = x  # NxK        
+            A = torch.transpose(A, 1, 0)  # KxN
+            A = F.softmax(A, dim=1)  # softmax over N
+            M = torch.mm(A, h) 
+            device = M.device
+            logits = torch.empty(1, len(self.predictor)).float().to(device)
+            for c in range(len(self.predictor)):
+                logits[0, c] = self.predictor[c](M[c])
+            x = logits
         else:   
             x = self.predictor(x)
 
@@ -258,12 +293,28 @@ class MHIM(nn.Module):
 
         if self.baseline == 'dsmil':
             x,_ = self.online_encoder(x)
+        elif self.baseline == "clam_sb":
+            A, h = self.online_encoder(x.squeeze())  # NxK        
+            A = torch.transpose(A, 1, 0)  # KxN
+            A = F.softmax(A, dim=1)  # softmax over N
+            M = torch.mm(A, h) 
+            x = self.predictor(M)
+        elif self.baseline == "clam_mb":
+            A, h = self.online_encoder(x.squeeze())  # NxK        
+            A = torch.transpose(A, 1, 0)  # KxN
+            A = F.softmax(A, dim=1)  # softmax over N
+            M = torch.mm(A, h) 
+            device = M.device
+            logits = torch.empty(1, len(self.predictor)).float().to(device)
+            for c in range(len(self.predictor)):
+                logits[0, c] = self.predictor[c](M[c])
+            x = logits
         else:
             x = self.online_encoder(x)
             x = self.predictor(x)
 
         if self.training:
-            return x, 0, ps,ps
+            return x, 0, ps, ps
         else:
             return x
 
