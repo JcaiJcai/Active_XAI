@@ -102,6 +102,7 @@ def parse_arguments():
     parser.add_argument('--attn_alpha', default=0., type=float, help='Weight for attention loss')
     parser.add_argument('--explanation', type=str, default="attention", choices=["attention", "shap-approximate"])
     parser.add_argument('--use_human_annotation', type=bool, default=False)
+    parser.add_argument('--inst_alpha', default=0., type=float, help='Weight for clam inst level loss')
     
     args = parser.parse_args()
     now = datetime.datetime.now().strftime('%m%d_%H%M') # 日期，小时，分钟

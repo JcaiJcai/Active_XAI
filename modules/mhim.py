@@ -4,7 +4,7 @@ from torch import nn
 from modules.datten import *
 import torch.nn.functional as F
 from modules.satten import *
-from modules.clam import Attn_Net, Attn_Net_Gated
+from modules.clam_mhim import CLAMSB, CLAMMB
 from .topk.svm import SmoothTop1SVM
 
 
@@ -67,22 +67,13 @@ class MHIM(nn.Module):
             self.online_encoder = DAttention(mlp_dim,da_act)
         elif baseline == 'dsmil': # DSMIL
             self.online_encoder = DSMIL(mlp_dim=mlp_dim,mask_ratio=mask_ratio)
-        elif baseline == 'clam_sb': # SAJ CLAM
-            self.online_encoder = Attn_Net_Gated(L=mlp_dim, D=mlp_dim//2, dropout=False, n_classes=1)
-        elif baseline == 'clam_mb': # SAJ CLAM
-            self.online_encoder = Attn_Net_Gated(L=mlp_dim, D=mlp_dim//2, dropout=False, n_classes=n_classes)
+        elif baseline == 'clam_sb': # SAJ CLAM hardcoded device for now
+            self.online_encoder = CLAMSB(l_dim=mlp_dim, d_dim=mlp_dim//2, dropout=False, n_classes=n_classes, device='cuda')
+        elif baseline == 'clam_mb': # SAJ CLAM hardcoded device for now
+            self.online_encoder = CLAMMB(l_dim=mlp_dim, d_dim=mlp_dim//2, dropout=False, n_classes=n_classes, device='cuda')
         
-        if baseline == 'clam_mb':
-            bag_classifiers = [nn.Linear(mlp_dim, 1) for i in range(n_classes)] #use an indepdent linear layer to predict each class
-            self.predictor = nn.ModuleList(bag_classifiers)
-        else:
-            self.predictor = nn.Linear(mlp_dim,n_classes)
+        self.predictor = nn.Linear(mlp_dim,n_classes)
 
-        if baseline == 'clam_sb':
-            instance_classifiers = [nn.Linear(mlp_dim, 2) for i in range(n_classes)]
-            self.instance_classifiers = nn.ModuleList(instance_classifiers)
-            self.k_sample = 8 # SAJ hardcoded for now 
-            self.instance_loss_fn = SmoothTop1SVM(2).to("cuda") # SAJ hardcoded for now
         # 设置 teacher 和 student 的 softmax 温度（用于 CL）
         self.temp_t = temp_t
         self.temp_s = temp_s
@@ -242,79 +233,55 @@ class MHIM(nn.Module):
 
         if self.baseline == 'dsmil': # 如果是 DSMIL 模型，encoder 输出三个值，取其中两个
             _,x,attn = self.online_encoder(x,return_attn=True)
+        elif self.baseline in ["clam_sb", "clam_mb"]:
+            A, h = self.online_encoder(x.squeeze())    
+            A = torch.transpose(A, 1, 0)  # KxN
+            attn = F.softmax(A, dim=1)  # softmax over N
+            x = torch.mm(attn, h) 
         else: # 返回编码后的 bag-level 表示 x 和 attention 分数 attn
             x,attn = self.online_encoder(x,return_attn=True)
 
         return x, attn
     
     @torch.no_grad()
-    def forward_test(self,x,return_attn=False,no_norm=False):
+    def forward_test(self, x, return_attn=False, no_norm=False):
         x = self.patch_to_emb(x)
         x = self.dp(x)
-
         if return_attn:
-            x,a = self.online_encoder(x,return_attn=True,no_norm=no_norm)
+            x, a = self.online_encoder(x, return_attn=True, no_norm=no_norm)
+        elif self.baseline in ["clam_sb", "clam_mb"]:
+            x, a = self.online_encoder(x, instance_eval=False)
         else:
-            if self.baseline in ["clam_sb", "clam_mb"]:
-                x = self.online_encoder(x.squeeze())
-            else:
-                x = self.online_encoder(x)
+            x = self.online_encoder(x)
 
         if self.baseline == 'dsmil':
             pass
-        elif self.baseline == "clam_sb":
-            A, h = x  # NxK        
-            A = torch.transpose(A, 1, 0)  # KxN
-            A = F.softmax(A, dim=1)  # softmax over N
-            M = torch.mm(A, h) 
-            x = self.predictor(M)
-        elif self.baseline == "clam_mb":
-            A, h = x  # NxK        
-            A = torch.transpose(A, 1, 0)  # KxN
-            A = F.softmax(A, dim=1)  # softmax over N
-            M = torch.mm(A, h) 
-            device = M.device
-            logits = torch.empty(1, len(self.predictor)).float().to(device)
-            for c in range(len(self.predictor)):
-                logits[0, c] = self.predictor[c](M[c])
-            x = logits
+        elif self.baseline in ["clam_sb", "clam_mb"]:
+            pass
         else:   
             x = self.predictor(x)
 
         if return_attn:
-            return x,a
+            return x, a
         else:
             return x
 
-    def pure(self,x):
+    def pure(self, x, label=None):
         x = self.patch_to_emb(x)
         x = self.dp(x)
         ps = x.size(1)
-
+        total_inst_loss = 0 
+        
         if self.baseline == 'dsmil':
             x,_ = self.online_encoder(x)
-        elif self.baseline == "clam_sb":
-            A, h = self.online_encoder(x.squeeze())  # NxK        
-            A = torch.transpose(A, 1, 0)  # KxN
-            A = F.softmax(A, dim=1)  # softmax over N
-            M = torch.mm(A, h) 
-            x = self.predictor(M)
-        elif self.baseline == "clam_mb":
-            A, h = self.online_encoder(x.squeeze())  # NxK        
-            A = torch.transpose(A, 1, 0)  # KxN
-            A = F.softmax(A, dim=1)  # softmax over N
-            M = torch.mm(A, h) 
-            device = M.device
-            logits = torch.empty(1, len(self.predictor)).float().to(device)
-            for c in range(len(self.predictor)):
-                logits[0, c] = self.predictor[c](M[c])
-            x = logits
+        elif self.baseline in ["clam_sb", "clam_mb"]:
+            x, total_inst_loss, _ = self.online_encoder(x, label)
         else:
             x = self.online_encoder(x)
             x = self.predictor(x)
 
         if self.training:
-            return x, 0, ps, ps
+            return x, 0, ps, ps, total_inst_loss
         else:
             return x
 
@@ -394,7 +361,7 @@ class MHIM(nn.Module):
             cls_loss= self.forward_cls_loss(student_cls_feat=student_cls_feat,teacher_cls_feat=teacher_cls_feat)
 
             return student_logit, cls_loss, ps, len_keep
-        
+    
     def forward_with_distill_loss(self, x, attn=None,labels_mask=None,teacher_cls_feat=None,i=None):
         # x: 输入的 patch-level 特征（维度: [batch, n_patches, feature_dim]）。
         # attn: 上一步 teacher 模型生成的 attention，用于指导 masking或者计算蒸馏损失。
@@ -417,7 +384,7 @@ class MHIM(nn.Module):
         # elif self.select_mask:
         #     len_keep, mask_ids = self.get_mask(ps, i, attn) # 返回保留 patch 数量和 mask 索引
         else:
-            len_keep,mask_ids = ps,None
+            len_keep,mask_ids = ps, None
             
         # print("len_keep",len_keep) # 7882，也就是只保留mask_ids的前7882个patch
         # print("mask_ids",mask_ids.shape, mask_ids) # torch.Size([1, 40233])
@@ -435,6 +402,27 @@ class MHIM(nn.Module):
             attn_loss = self.forward_attn_loss(student_attn=student_attn, teacher_attn=attn, mask_ids=mask_ids)
 
             return student_logit, cls_loss, attn_loss, ps, len_keep
+        elif self.baseline == 'clam_sb':
+            if mask_ids is not None:
+                x, _,_ = self.masking(x, mask_ids, len_keep)
+            A, h = self.online_encoder(x.squeeze())  # NxK   
+            A = torch.transpose(A, 1, 0)  # KxN
+            A = F.softmax(A, dim=1)  # softmax over N
+            student_cls_feat = torch.mm(A, h) 
+            student_logit = self.predictor(student_cls_feat)
+            cls_loss= self.forward_cls_loss(student_cls_feat=student_cls_feat,teacher_cls_feat=teacher_cls_feat)
+            attn_loss = self.forward_attn_loss(student_attn=student_attn, teacher_attn=attn, mask_ids=mask_ids)
+            return student_logit, cls_loss, attn_loss, ps, len_keep
+        elif self.baseline == "clam_mb": 
+            A, h = self.online_encoder(x.squeeze())  # NxK        
+            A = torch.transpose(A, 1, 0)  # KxN
+            A = F.softmax(A, dim=1)  # softmax over N
+            M = torch.mm(A, h) 
+            device = M.device
+            logits = torch.empty(1, len(self.predictor)).float().to(device)
+            for c in range(len(self.predictor)):
+                logits[0, c] = self.predictor[c](M[c])
+            x = logits
         else:
             # forward online network
             student_cls_feat, student_attn = self.online_encoder(x,len_keep=len_keep,mask_ids=mask_ids,mask_enable=True,return_attn=True)

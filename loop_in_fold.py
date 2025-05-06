@@ -324,7 +324,7 @@ def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criteri
         label=data[1].to(device)
         # coords=data[2].to(device) #暂时用不到
         labels_mask=data[3].to(device)
-        
+        total_inst_loss = 0
 
         with amp_autocast(): # 开启 AMP
             # 打乱patch
@@ -359,40 +359,40 @@ def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criteri
                         score = shapley.shapley_value(attn_index, bag, label, model_tea, device, args.baseline, subset_num=10).to(attn[0].device) # (len(search_indices), )
                         attn = [score.unsqueeze(0).unsqueeze(0).expand(1, 8, -1) for _ in range(2)] # （1，8, 16124）
                 else:
-                    attn,cls_tea = None,None
+                    attn,cls_tea = None, None
                     
                 
                 cls_tea = None if args.cl_alpha == 0. else cls_tea
 
                 # ***** 学生模型 *****
-                if args.use_attn_loss == True:
+                if args.use_attn_loss:
                     if args.baseline == 'dsmil':
                         # logits 是 DSMIL 的主类预测 + instance-level 预测。用两个都计算 loss
-                        logits, cls_loss, attn_loss, patch_num, keep_num = model.forward_with_distill_loss(bag,attn,labels_mask,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
+                        logits, cls_loss, attn_loss, patch_num, keep_num, total_inst_loss = model.forward_with_distill_loss(bag,attn,labels_mask,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
                         logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                     else:
-                        logits, cls_loss, attn_loss, patch_num, keep_num = model.forward_with_distill_loss(bag,attn,labels_mask,cls_tea,i=epoch*len(loader)+i)
+                        logits, cls_loss, attn_loss, patch_num, keep_num, total_inst_loss = model.forward_with_distill_loss(bag,attn,labels_mask,cls_tea,i=epoch*len(loader)+i)
                     
                 else:
                     if args.baseline == 'dsmil':
                         # logits 是 DSMIL 的主类预测 + instance-level 预测。用两个都计算 loss
-                        logits, cls_loss,patch_num,keep_num = model(bag,attn,labels_mask,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
+                        logits, cls_loss, patch_num, keep_num, total_inst_loss = model(bag,attn,labels_mask,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
                         logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                     else:
-                        logits, cls_loss,patch_num,keep_num = model(bag,attn,labels_mask,cls_tea,i=epoch*len(loader)+i)
+                        logits, cls_loss, patch_num, keep_num, total_inst_loss = model(bag, attn,labels_mask, cls_tea, i=epoch*len(loader)+i)
 
             elif args.model == 'pure':
                 if args.baseline == 'dsmil':
-                    logits, cls_loss,patch_num,keep_num = model.pure(bag)
+                    logits, cls_loss, patch_num, keep_num, total_inst_loss = model.pure(bag)
                     logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                 else:
-                    logits, cls_loss,patch_num,keep_num = model.pure(bag)
+                    logits, cls_loss, patch_num, keep_num, total_inst_loss = model.pure(bag, label)
             elif args.model in ('clam_sb','clam_mb','dsmil'):
-                logits,cls_loss,patch_num = model(bag,label,criterion)
+                logits, cls_loss, patch_num = model(bag, label, criterion)
                 keep_num = patch_num
             else:
                 logits = model(bag)
-                cls_loss,patch_num,keep_num = 0.,0.,0.
+                cls_loss, patch_num, keep_num = 0.,0.,0.
             
             # 分类损失计算
             if logit_loss is None:
@@ -400,16 +400,16 @@ def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criteri
                     logit_loss = criterion(logits.view(batch_size,-1),label)
                 elif args.loss == 'bce':
                     logit_loss = criterion(logits.view(batch_size,-1),one_hot(label.view(batch_size,-1).float(),num_classes=2))
-
         # 总Loss
-        if args.use_attn_loss == True:
+        if args.use_attn_loss:
             # print("logit_loss",logit_loss)
             # print("cls_loss",cls_loss)
             # print("attn_loss",attn_loss)
             # train_loss = args.cls_alpha * logit_loss +  cls_loss*args.cl_alpha + attn_loss*attn_alpha
-            train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha # !试一下只用attn_loss的实验
+            train_loss = args.cls_alpha * logit_loss + args.attn_alpha * attn_loss + args.inst_alpha * total_inst_loss
+            # !试一下只用attn_loss的实验
         else:
-            train_loss = args.cls_alpha * logit_loss +  cls_loss*args.cl_alpha
+            train_loss = args.cls_alpha * logit_loss + args.cl_alpha * cls_loss + args.inst_alpha * total_inst_loss
         train_loss = train_loss / args.accumulation_steps
         
         # 梯度裁剪
