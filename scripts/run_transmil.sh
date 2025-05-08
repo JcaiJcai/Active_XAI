@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name="transmil"
-#SBATCH --output="/u/jcai1/code/usefulxai/code/my_method/results/scripts/transmil"
+#SBATCH --output="/u/jcai1/code/usefulxai/paper_results/pure/scripts/transmil.out"
 #SBATCH --partition=gpuA40x4
 #SBATCH --mem=50G
 #SBATCH --nodes=1
@@ -12,11 +12,12 @@
 #SBATCH --account=bdem-delta-gpu
 #SBATCH --no-requeue
 #SBATCH -t 24:00:00
+
 source activate clam_latest
 cd /u/jcai1/code/usefulxai/code/my_method
-python main.py --project=transmil_0405 \
---model_path=/u/jcai1/code/usefulxai/code/my_method/results \
---h5_folder_name=h5_files \
+
+python main.py --project=transmil \
+--model_path=/u/jcai1/code/usefulxai/paper_results \
 --k_fold=3 \
 --title=transmil \
 --model=pure \

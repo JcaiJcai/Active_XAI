@@ -371,38 +371,93 @@ class Generic_MIL_Dataset(Generic_WSI_Classification_Dataset):
 			data_dir = self.data_dir[source]
 		else:
 			data_dir = self.data_dir
-		if not self.use_h5: # pt格式
-			if self.data_dir:
-				full_path = os.path.join(data_dir, 'pt_files', '{}.pt'.format(slide_id))
-				features = torch.load(full_path)
-				return features, label
+		
+		# if not self.use_h5: # ** pt files **
+		# 	if self.data_dir:
+		# 		full_path = os.path.join(data_dir, 'pt_files', '{}.pt'.format(slide_id))
+		# 		features = torch.load(full_path)
+		# 		return features, label
 			
-			else:
-				return slide_id, label
+		# 	else:
+		# 		return slide_id, label
 
-		else: # h5格式
-			if self.h5_folder_name == 'h5_files' or self.h5_folder_name == 'h5_files_annotations':
-				full_path = os.path.join(data_dir,self.h5_folder_name,'{}.h5'.format(slide_id)) # !只有部分图片有annotations怎么办
-				with h5py.File(full_path,'r') as hdf5_file:
-					features = hdf5_file['features'][:]
-					coords = hdf5_file['coords'][:]
-				features = torch.from_numpy(features)
-				return features, label, coords
+		# else: # ** h5 files **
+			# if self.h5_folder_name == 'h5_files' or self.h5_folder_name == 'h5_files_annotations':
+			# 	full_path = os.path.join(data_dir,self.h5_folder_name,'{}.h5'.format(slide_id))
+			# 	with h5py.File(full_path,'r') as hdf5_file:
+			# 		features = hdf5_file['features'][:]
+			# 		coords = hdf5_file['coords'][:]
+			# 	features = torch.from_numpy(features)
+			# 	return features, label, coords
 
-			elif self.h5_folder_name == 'h5_files_labels':
-				full_path = os.path.join(data_dir,'h5_files_labels','{}.h5'.format(slide_id)) # !只有部分图片有labels怎么办
-				if not os.path.exists(full_path):
-					full_path = os.path.join(data_dir,'h5_files_labels','{}_tiff.h5'.format(slide_id))
-     
-				hdf5_file = safe_open_h5(full_path)
+		if self.h5_folder_name == 'h5_files_labels':
+			full_path = os.path.join(data_dir,'h5_files_labels','{}.h5'.format(slide_id))
+			if not os.path.exists(full_path):
+				full_path = os.path.join(data_dir,'h5_files_labels','{}_tiff.h5'.format(slide_id))
+	
+			hdf5_file = safe_open_h5(full_path)
 
-				# with h5py.File(full_path,'r') as hdf5_file:
-				features = hdf5_file['features'][:]
-				coords = hdf5_file['coords'][:]
-				labels_mask= hdf5_file['labels'][:]
+			# with h5py.File(full_path,'r') as hdf5_file:
+			features = hdf5_file['features'][:]
+			coords = hdf5_file['coords'][:]
+			labels_mask = hdf5_file['labels'][:]
+			slide_id2 = slide_id
 
-				features = torch.from_numpy(features)
-				return features, label, coords, labels_mask
+			features = torch.from_numpy(features)
+			return features, label, coords, labels_mask, slide_id2 # -> utils_clam/utils.py -> collate_MIL
+
+	def get_data_by_slide_id(self, slide_id2):
+		# 在 slide_data 中查找对应索引
+		matches = self.slide_data[self.slide_data['slide_id2'] == slide_id2]
+		if len(matches) == 0:
+			raise ValueError(f"Slide ID {slide_id2} not found in dataset.")
+
+		idx = matches.index[0]
+		label = self.slide_data.loc[idx, 'label']
+
+		if isinstance(self.data_dir, dict):
+			source = self.slide_data.loc[idx, 'source']
+			data_dir = self.data_dir[source]
+		else:
+			data_dir = self.data_dir
+
+		# if not self.use_h5:
+		# 	full_path = os.path.join(data_dir, 'pt_files', f'{slide_id2}.pt')
+		# 	features = torch.load(full_path)
+		# 	return features, label
+
+		# if self.h5_folder_name in ['h5_files', 'h5_files_annotations']:
+		# 	full_path = os.path.join(data_dir, self.h5_folder_name, f'{slide_id2}.h5')
+		# 	with h5py.File(full_path, 'r') as hdf5_file:
+		# 		features = hdf5_file['features'][:]
+		# 		coords = hdf5_file['coords'][:]
+		# 	features = torch.from_numpy(features)
+		# 	batch = {
+		# 		'features': features, 
+		# 		'label': label, 
+		# 		'coords': coords,
+		# 	}
+		# 	return batch
+
+		if self.h5_folder_name == 'h5_files_labels':
+			full_path = os.path.join(data_dir, 'h5_files_labels', f'{slide_id2}.h5')
+			if not os.path.exists(full_path):
+				full_path = os.path.join(data_dir, 'h5_files_labels', f'{slide_id2}_tiff.h5')
+			hdf5_file = safe_open_h5(full_path)
+			features = hdf5_file['features'][:]
+			coords = hdf5_file['coords'][:]
+			bag_size = coords.shape[0]
+			labels_mask = hdf5_file['labels'][:]
+			features = torch.from_numpy(features)
+			batch = {
+				'features': features, 
+				'label': label, 
+				'coords': coords,
+				'labels_mask': labels_mask,
+				'slide_id2': slide_id2,
+				'bag_size': bag_size,
+			}
+			return batch
 
 
 class Generic_Split(Generic_MIL_Dataset):

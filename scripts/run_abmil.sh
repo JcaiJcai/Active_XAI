@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name="dsmil"
-#SBATCH --output="/u/jcai1/code/usefulxai/paper_results/pure/scripts/dsmil.out"
+#SBATCH --job-name="abmil"
+#SBATCH --output="/u/jcai1/code/usefulxai/paper_results/pure/scripts/abmil.out"
 #SBATCH --partition=gpuA40x4
 #SBATCH --mem=50G
 #SBATCH --nodes=1
@@ -16,10 +16,10 @@
 source activate clam_latest
 cd /u/jcai1/code/usefulxai/code/my_method
 
-python main.py --project=dsmil \
+python main.py --project=abmil \
 --model_path=/u/jcai1/code/usefulxai/paper_results \
 --k_fold=3 \
---title=dsmil \
+--title=abmil \
 --model=pure \
---baseline=dsmil \
+--baseline=attn \
 --seed=2021

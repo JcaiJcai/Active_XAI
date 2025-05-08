@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from args_parser import parse_arguments
 
-from dataset_modules.dataset_generic import Generic_WSI_Classification_Dataset, Generic_MIL_Dataset
+from dataset_modules.dataset_generic import Generic_MIL_Dataset
 from loop_in_fold import one_fold
 
 def seed_torch(seed=2021):

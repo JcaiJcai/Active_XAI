@@ -23,6 +23,24 @@ def ema_update(model,targ_model,mm=0.9999):
 
     for param_q, param_k in zip(model.parameters(), targ_model.parameters()):
         param_k.data.mul_(mm).add_(param_q.data, alpha=1. - mm) # mm*k +(1-mm)*q
+        
+# 在 EMA 更新时跳过 targ_model.evidence_head 的参数更新，
+# 即 不对 evidence_head 的参数进行 momentum 同步，因为你希望 evidence_head 单独训练。
+@torch.no_grad()
+def ema_update_edl(model, targ_model, mm=0.9999):
+    r"""Performs a momentum update of the target network's weights.
+    Skips evidence_head to keep it trainable.
+    """
+    assert 0.0 <= mm <= 1.0, "Momentum needs to be between 0.0 and 1.0, got %.5f" % mm
+
+    # 使用 named_parameters() 获取每个参数的模块路径
+    for (name_q, param_q), (name_k, param_k) in zip(
+        model.named_parameters(), targ_model.named_parameters()
+    ):  
+        if 'evidence_head' in name_k:
+            continue  # 不更新 evidence_head 的参数
+        param_k.data.mul_(mm).add_(param_q.data, alpha=1. - mm)
+
 
 def patch_shuffle(x,group=0,g_idx=None,return_g_idx=False):
     b,p,n = x.size()

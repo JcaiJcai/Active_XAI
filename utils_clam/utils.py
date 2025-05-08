@@ -55,11 +55,12 @@ def collate_MIL(batch): # Jie
 	label = torch.LongTensor([item[1] for item in batch])
 	coords = torch.tensor(np.vstack([item[2] for item in batch]), dtype=torch.long)
 	labels_mask = torch.tensor(np.vstack([item[3] for item in batch]).squeeze(), dtype=torch.long)
+	slide_id2 = [item[4] for item in batch] 
 	# print("~~~~~~~~2222")
 	# # ([36710, 1024]) ([1]) (36710, 2) (36710,)
 	# print(img.shape, label.shape, coords.shape, labels_mask.shape)
 	# print("~~~~~~~~3333")
-	return [img, label, coords, labels_mask]
+	return [img, label, coords, labels_mask, slide_id2]
 
 
 def collate_features(batch):

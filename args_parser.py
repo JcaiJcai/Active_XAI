@@ -95,18 +95,29 @@ def parse_arguments():
     parser.add_argument('--wandb', action='store_true', help='Weight&Bias')
     parser.add_argument('--num_workers', default=2, type=int, help='Number of workers in the dataloader') # !!!!!!!!
     parser.add_argument('--no_log', action='store_true', help='Without log')
-    parser.add_argument('--model_path', type=str, help='Output path')
+    parser.add_argument('--model_path', default=None, type=str, help='Output path')
     
     # Jie
-    parser.add_argument('--use_attn_loss', type=bool, default=False, help='Enable attention-based auxiliary loss')
-    parser.add_argument('--attn_alpha', default=0., type=float, help='Weight for attention loss')
-    parser.add_argument('--explanation', type=str, default="attention", choices=["attention", "shap-approximate"])
-    parser.add_argument('--use_human_annotation', type=bool, default=False)
+    parser.add_argument('--explanation', type=str, default="attention", choices=["attention", "shap1", "shap2"])
+    parser.add_argument('--use_human_mask', type=bool, default=False)
+    parser.add_argument('--use_attention_loss', type=bool, default=False, help='Enable attention-based auxiliary loss')
+    parser.add_argument('--attn_alpha', default=1., type=float, help='Weight for attention loss')
+    parser.add_argument('--use_annotation_loss', type=bool, default=False)
+    parser.add_argument('--annotation_alpha', default=1., type=float, help='Weight for annotation_loss')
+    parser.add_argument('--anno_loss_type', default="energy", type=str, choices=["L1", "L2", "energy", "entropy"])
+    parser.add_argument('--energy_alphas', default=None, type=list) # 
+    parser.add_argument('--explained_model', default='none', type=str, help='Path to explained model')
+    parser.add_argument('--uncertainty', default=False, type=bool, help='Whether calculate uncertainty score or not')
+    parser.add_argument('--top_k_for_annotation', default=50, type=int, help='Number of images to be annotated')
+    parser.add_argument('--start_using_annotation', default=40, type=int, help='From which epoch to use annotation')
+    
+    # Shap
+    parser.add_argument('--search_num', default=None, type=int, help='Number of patches to calculate shap values')
+  
     
     args = parser.parse_args()
-    now = datetime.datetime.now().strftime('%m%d_%H%M') # 日期，小时，分钟
+    now = datetime.datetime.now().strftime('%m%d_%H%M')
     args.project = f"{args.project}_{now}"
-    print(args.use_attn_loss)
     return args
 
 if __name__ == "__main__":

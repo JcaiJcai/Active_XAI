@@ -20,6 +20,7 @@ from collections import OrderedDict
 from utils_clam.utils import get_split_loader
 from utils_clam import *
 from utils_mhim import *
+from uncertainty import *
 
 from modules import attmil,clam,mhim,dsmil,transmil,mean_max
 from explanation import shapley
@@ -36,9 +37,9 @@ def seed_torch(seed=2021):
 
 def one_fold(args,k,ckc_metric,dataset):
     seed_torch(args.seed)
-    # loss_scaler = GradScaler() if args.amp else None # AMP（自动混合精度训练）
+    # loss_scaler = GradScaler() if args.amp else None # AMP (Automatic Mixed Precision Training)
     loss_scaler = None
-    # amp_autocast = torch.cuda.amp.autocast if args.amp else suppress # 混合精度下的自动 autocast
+    # amp_autocast = torch.cuda.amp.autocast if args.amp else suppress # Autocast under mixed precision
     amp_autocast = suppress
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu') # TODO
     acs,pre,rec,fs,auc,te_auc,te_fs = ckc_metric
@@ -50,28 +51,27 @@ def one_fold(args,k,ckc_metric,dataset):
     print("train_dataset",train_dataset)
     print("val_dataset",val_dataset)
     print("test_dataset",test_dataset)
-    # !注意这里我们可能没有固定seed
-    train_loader = get_split_loader(train_dataset, args.batch_size, training=True, testing = args.testing, weighted = args.weighted_sample) # batch_size都是1
+    # ! Note: Need to check whether we have a fixed seed
+    train_loader = get_split_loader(train_dataset, args.batch_size, training=True, testing = args.testing, weighted = args.weighted_sample) # batch_size = 1
     val_loader = get_split_loader(val_dataset, args.batch_size, testing = args.testing)
     test_loader = get_split_loader(test_dataset, args.batch_size, testing = args.testing)
     print('Done!')
     print(len(val_loader))
-    try:
-        first_batch = next(iter(val_loader))
-        print("val_loader 有数据")
-    except StopIteration:
-        print("[WARNING] val_loader 是空的（StopIteration）")
     
     mm_sche = None
-    # 加载之前训练好的某折的模型作为初始的teacher模型
-    _teacher_init =args.teacher_init
+    # Load the previously trained model from a specific fold as the initial teacher model
+    if not args.teacher_init.endswith('.pt'):
+        _str = 'fold_{fold}_model_best_auc.pt'.format(fold=k)
+        _teacher_init = os.path.join(args.teacher_init,_str)
+    else:
+        _teacher_init =args.teacher_init
     
     # ** Load model **
     if args.model == 'mhim':
         if args.mrh_sche:
-            # 调度器控制每一步的 mask_ratio_h，随 epoch / iteration 逐步下降（余弦衰减）
-            mrh_sche = cosine_scheduler(args.mask_ratio_h, # 初始值
-                                        0., # 最终值
+            # Scheduler controls the step-wise decay of mask_ratio_h over epochs/iterations (using cosine decay)
+            mrh_sche = cosine_scheduler(args.mask_ratio_h, # Initial value
+                                        0., # Final value
                                         epochs=args.num_epoch,
                                         niter_per_ep=len(train_loader)
                                         )
@@ -81,28 +81,30 @@ def one_fold(args,k,ckc_metric,dataset):
         model_params = {
             'baseline': args.baseline,
             'dropout': args.dropout,
-            'mask_ratio' : args.mask_ratio, # 全局掩码比例
+            'mask_ratio' : args.mask_ratio, # Global masking ratio
             'n_classes': args.n_classes,
-            'temp_t': args.temp_t, # 温度参数
-            'act': args.act, # 激活函数类型
+            'temp_t': args.temp_t, # Temperature parameter
+            'act': args.act, # Activation function
             'head': args.n_heads,
-            'msa_fusion': args.msa_fusion, # 多头注意力的融合方式
-            # 高层、恢复、高层再掩码和低层掩码比例
+            'msa_fusion': args.msa_fusion,  # Fusion method for multi-head attention
+            # High-level, recovery, high-level re-mask, and low-level masking ratios
             'mask_ratio_h': args.mask_ratio_h,
             'mask_ratio_hr': args.mask_ratio_hr,
             'mask_ratio_l': args.mask_ratio_l,
-            'mrh_sche': mrh_sche, # 掩码调度器
-            'da_act': args.da_act, # 数据增强相关的激活函数
-            'attn_layer': args.attn_layer, # 注意力层的配置
-            'use_human_annotation': args.use_human_annotation,
+            'mrh_sche': mrh_sche, # Masking scheduler
+            'da_act': args.da_act, # Activation function related to data augmentation
+            'attn_layer': args.attn_layer, # Configuration for attention layers
+            'use_human_mask': args.use_human_mask,
+            'use_annotation_loss': args.use_annotation_loss,
+            'use_attention_loss': args.use_attention_loss,
         }
         
         if args.mm_sche:
-            mm_sche = cosine_scheduler(args.mm,args.mm_final,epochs=args.num_epoch,niter_per_ep=len(train_loader),start_warmup_value=1.)# start_warmup_value前期可能先预热
+            mm_sche = cosine_scheduler(args.mm,args.mm_final,epochs=args.num_epoch,niter_per_ep=len(train_loader),start_warmup_value=1.)# mm scheduler using cosine decay; may start with warmup (start_warmup_value)
 
         model = mhim.MHIM(**model_params).to(device)
-    elif args.model == 'pure': # 最最简单的模型
-        model = mhim.MHIM(select_mask=False,n_classes=args.n_classes,act=args.act,head=args.n_heads,da_act=args.da_act,baseline=args.baseline).to(device)    
+    elif args.model == 'pure': # pure model
+        model = mhim.MHIM(select_mask=False,n_classes=args.n_classes,act=args.act,head=args.n_heads,da_act=args.da_act,baseline=args.baseline).to(device)
     elif args.model =='clam_sb':
         # model = CLAM_SB(**model_dict,  instance_loss_fn=instance_loss_fn)
         model = clam.CLAM_SB(n_classes=args.n_classes,dropout=args.dropout,act=args.act).to(device)
@@ -110,16 +112,16 @@ def one_fold(args,k,ckc_metric,dataset):
         # model = CLAM_MB(**model_dict,instance_loss_fn=instance_loss_fn)
         model = clam.CLAM_MB(n_classes=args.n_classes,dropout=args.dropout,act=args.act).to(device)        
     
-    # 初始化学生模型（student model）参数 
+    # Initialize the student model parameters
     if args.init_stu_type != 'none':
         if not args.no_log:
             print('######### Model Initializing.....')
         pre_dict = torch.load(_teacher_init)
         if 'model' in pre_dict:
-            pre_dict = pre_dict['model'] # 取出实际参数
+            pre_dict = pre_dict['model'] # Extract actual model parameters
             
         new_state_dict ={}
-        if args.init_stu_type == 'fc': # 只初始化 patch_to_emb 模块
+        if args.init_stu_type == 'fc': # Initialize only the patch_to_emb module
         # only patch_to_emb
             for _k,v in pre_dict.items():
                 _k = _k.replace('patch_to_emb.','') if 'patch_to_emb' in _k else _k
@@ -127,29 +129,30 @@ def one_fold(args,k,ckc_metric,dataset):
             info = model.patch_to_emb.load_state_dict(new_state_dict,strict=False)
         else: 
         # init all
-            info = model.load_state_dict(pre_dict,strict=False) # 初始化整个模型
+            info = model.load_state_dict(pre_dict,strict=False) # Initialize the entire model
         if not args.no_log:
             print(info)
             
     # *** Init teacher ***
     if args.model == 'mhim':
-        model_tea = deepcopy(model) # 创建一个 teacher 模型：直接复制当前 student 模型作为初始化版本（深拷贝，二者权重独立）
+        model_tea = deepcopy(model) # Create a teacher model: directly copy the current student model as the initial version (deep copy, independent weights)
         if not args.no_tea_init and args.tea_type != 'same': # !!
             print('######### Teacher Initializing.....')
             try:
                 pre_dict = torch.load(_teacher_init)
                 if 'model' in pre_dict:
                     pre_dict = pre_dict['model']
-                info = model_tea.load_state_dict(pre_dict,strict=False) # 尝试从 checkpoint 加载权重给 model_tea，允许部分加载
+                info = model_tea.load_state_dict(pre_dict,strict=False) # Loading weights from a checkpoint into model_tea; allow partial loading
                 if not args.no_log:
                     print(info)
             except:
                 if not args.no_log:
                     print('########## Init Error')
-        # if args.tea_type == 'same':
-        #     model_tea = model # teacher 就是 student，不需要分开两个模型（共享权重）。
+        opt_evid = torch.optim.Adam(model_tea.evidence_head.parameters(), lr=1e-4)
+
     else:
         model_tea = None
+        opt_evid = None
     
     # *** Loss
     if args.loss == 'bce':
@@ -163,15 +166,15 @@ def one_fold(args,k,ckc_metric,dataset):
     elif args.opt == 'adam':
         optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.weight_decay)
         
-    # *** Learning Rate Scheduler，用于动态调整训练过程中优化器的学习率
-    if args.lr_sche == 'cosine': # 	余弦退火
+    # *** Learning Rate Scheduler: dynamically adjusts the learning rate of the optimizer during training
+    if args.lr_sche == 'cosine': # 	Cosine annealing
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.num_epoch, 0) if not args.lr_supi else torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.num_epoch*len(train_loader), 0)
-    elif args.lr_sche == 'step': # 阶梯衰减	
+    elif args.lr_sche == 'step': # Step decay	
         assert not args.lr_supi
         # follow the DTFD-MIL
         # ref:https://github.com/hrzhang1123/DTFD-MIL
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer,args.num_epoch / 2, 0.2)
-    elif args.lr_sche == 'const': # 固定学习率
+    elif args.lr_sche == 'const': # Constant learning rate
         scheduler = None
 
     # *** Early stopping
@@ -184,35 +187,40 @@ def one_fold(args,k,ckc_metric,dataset):
     optimal_ac, opt_pre, opt_re, opt_fs, opt_auc,opt_thr,opt_epoch = 0, 0, 0, 0,0,0,0
     opt_te_auc,opt_tea_auc,opt_te_fs,opt_te_tea_auc,opt_te_tea_fs  = 0., 0., 0., 0., 0.
     
-    train_time_meter = AverageMeter() # 计时器
+    train_time_meter = AverageMeter() # Timer
+    current_uncertainties = None
     
     for epoch in range(epoch_start, args.num_epoch):
         # ****** TRAIN (Teacher and Student)******
-        train_loss,start,end = train_loop(args,model,model_tea,train_loader,optimizer,device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch)
-        train_time_meter.update(end-start) # 训练时间
-        # stop: early stopping 是否触发了；threshold_optimal: 最优分类阈值（如果是二分类）
+        train_loss, start, end, uncertainties = train_loop(args,model,model_tea,train_loader,optimizer,opt_evid, device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch, current_uncertainties)
+        train_time_meter.update(end-start) # Training time
         
+        if epoch % 20 == 0:
+            print(f"[Epoch {epoch}] all_uncertainties:")
+            print(uncertainties)
         # ****** EVALUATE (Student) ******
+        # stop: whether early stopping was triggered; threshold_optimal: the optimal classification threshold (for binary classification)
         stop,accuracy, auc_value, precision, recall, fscore, test_loss, threshold_optimal = val_loop(args,model,val_loader,device,criterion,early_stopping,epoch,model_tea)
         
         # ****** EVALUATE (Teacher) ******
-        if model_tea is not None: # 如果有 teacher 模型
-            # 对 teacher 模型做一次验证
+        if model_tea is not None: # If a teacher model exists
+            # Perform a validation run on the teacher model
             _,accuracy_tea, auc_value_tea, precision_tea, recall_tea, fscore_tea, test_loss_tea,_ = val_loop(args,model_tea,val_loader,device,criterion,None,epoch,model_tea)
             
-            if auc_value_tea > opt_tea_auc: # 如果当前 teacher 的验证 AUC 比之前最优的还高，就更新
+            if auc_value_tea > opt_tea_auc: # If the current teacher model's AUC is better than the previous best, update it
                 opt_tea_auc = auc_value_tea
+                current_uncertainties = uncertainties
 
-        # ********* TEST *********
+        # ********* TEST (Student) *********
         if args.always_test:
-            # 测试 student 模型
+            # Test student model
             _te_accuracy, _te_auc_value, _te_precision, _te_recall, _te_fscore,_te_test_loss_log = test(args,model,test_loader,device,criterion,model_tea)
 
             if _te_auc_value > opt_te_auc:
                 opt_te_auc = _te_auc_value
                 opt_te_fs = _te_fscore
             
-            if model_tea is not None: # 测试教师模型
+            if model_tea is not None: # Test teacher model
                 _te_tea_accuracy, _te_tea_auc_value, _te_tea_precision, _te_tea_recall, _te_tea_fscore,_te_tea_test_loss_log = test(args,model_tea,test_loader,device,criterion,model_tea)
             
                 if _te_tea_auc_value > opt_te_tea_auc:
@@ -222,8 +230,8 @@ def one_fold(args,k,ckc_metric,dataset):
         print('\r Epoch [%d/%d] train loss: %.1E, test loss: %.1E, accuracy: %.3f, auc_value:%.3f, precision: %.3f, recall: %.3f, fscore: %.3f , time: %.3f(%.3f)' % 
         (epoch+1, args.num_epoch, train_loss, test_loss, accuracy, auc_value, precision, recall, fscore, train_time_meter.val,train_time_meter.avg))
         
-        # 在验证集 AUC 超过历史最优值，并且训练进度达到一定阶段后，保存当前模型为“最佳模型”。
-        # args.save_best_model_stage 是一个 [0, 1] 之间的浮点数，比如 0.5，表示“从总轮数的一半开始才保存最佳模型”。
+        # When the AUC on the validation set exceeds the historical best and training has reached a certain stage, save the current model as the "best model".
+        # args.save_best_model_stage is a float between 0 and 1 (e.g., 0.5), indicating that the "best model" will only be saved after reaching that proportion of the total training epochs.
         if auc_value > opt_auc and epoch >= args.save_best_model_stage*args.num_epoch:
             optimal_ac = accuracy
             opt_pre = precision
@@ -290,62 +298,73 @@ def one_fold(args,k,ckc_metric,dataset):
         
     return [acs,pre,rec,fs,auc,te_auc,te_fs]
 
-def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch):
+def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch, current_uncertainties):
     start = time.time()
-    # 记录训练过程中平均指标值
-    loss_cls_meter = AverageMeter() # 分类损失（logit loss）
-    loss_cl_meter = AverageMeter() # 对比损失或蒸馏损失（cls_loss）
+
+    loss_cls_meter = AverageMeter() # logit loss
+    loss_cl_meter = AverageMeter() # cls_loss
     patch_num_meter = AverageMeter() # 输入的 patch 数
     keep_num_meter = AverageMeter() # “保留”的 patch 数（例如某些掩码操作后剩下的）
-    mm_meter = AverageMeter() # EMA momentum 值
+    mm_meter = AverageMeter() # EMA momentum value
+    
     train_loss_log = 0. # 最终返回的平均损失
     
     # 将主模型和 teacher 模型都设置为训练模式
     model.train()
     if model_tea is not None:
         model_tea.train()
+        
+    all_uncertainties = {}
 
-    for i, data in enumerate(loader): # i是batch index，batch_size是1时，data是整个train数据集
+    for i, data in enumerate(loader): # i - batch index
         # data[0]: features(36710, 1024)
         # data[1]: label(1)
         # data[2]: coords(36710, 2)
         # data[3]: labels_mask(36710,)
-        # print("data",data[0].shape, data) # torch.Size([55340, 1024])
+        
         optimizer.zero_grad() # 清除上一个 batch 的梯度
+        if optimizer_teacher is not None:
+            optimizer_teacher.zero_grad()
 
         # bag: 是一个 batch 的 feature（MIL 模型中，一张 WSI = 一个 bag，bag 内有多个 patch）
-        # batch_size: 当前 batch 内有多少张图（每张图是一个 bag）
         bag=data[0].to(device)  # b*n*1024
-        # print("bag", bag.shape)
-        if bag.ndim == 2: # 如果batch_size=1的话
+        if bag.ndim == 2: # if batch_size==1
             bag = bag.unsqueeze(0)
         batch_size=bag.size(0)
         
         label=data[1].to(device)
-        # coords=data[2].to(device) #暂时用不到
+        # coords=data[2].to(device)
         labels_mask=data[3].to(device)
-        
+        slide_id2=data[4][0]
 
-        with amp_autocast(): # 开启 AMP
-            # 打乱patch
+        with amp_autocast(): # AMP
+            # shuffle patches
             if args.patch_shuffle:
                 bag = patch_shuffle(bag,args.shuffle_group)
             elif args.group_shuffle:
                 bag = group_shuffle(bag,args.shuffle_group)
             
-            # 初始化分类损失
             logit_loss = None
             
-            # model_tea和model都是MHIM
+            # model_tea & model: MHIM
             if args.model == 'mhim':
                 if model_tea is not None:
-                    # ***** 教师模型 *****
+                    # ***** Teacher Model (generate prediction and attention without back propagation) *****
                     # ! attn -> explanation
                     if args.explanation == "attention":
-                        cls_tea, attn = model_tea.forward_teacher(bag) # 用教师模型生成 attention 和预测概率
+                        if args.uncertainty == True: # and epoch>0.5*args.num_epoch-1:
+                            # Use teacher model to generate prediction and attention
+                            alpha, cls_tea, attn = model_tea.forward_teacher_edl(bag)
+                            K = alpha.shape[1] # 类别数
+                            S = torch.sum(alpha, dim=1, keepdim=True)  # 每个样本的总证据强度 S_i
+                            uncertainty = K / (S + 1e-8) # [B, 1] # uncertainty 越大，模型越不确定
+                            # print(slide_id2,uncertainty.item())
+                            all_uncertainties[slide_id2] = uncertainty.item()
+                        else:
+                            cls_tea, attn = model_tea.forward_teacher(bag)
                         # attn_sum = attn[1].sum(dim=-1)
-                        # print("!!!!!!!attn_sum",attn_sum) # attention并不是归一化之后的
-                    elif args.explanation == "shap-approximate": 
+                        # print("!!!!!!!attn_sum",attn_sum) # attention is not normalized
+                    elif args.explanation == "shap-approximate": # Not available
                         cls_tea, attn = model_tea.forward_teacher(bag)
                         # 用教师模型生成shap解释
                         # print("attn",len(attn), attn) # len是2说明这个attention对应的是两层的
@@ -359,19 +378,18 @@ def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criteri
                         score = shapley.shapley_value(attn_index, bag, label, model_tea, device, args.baseline, subset_num=10).to(attn[0].device) # (len(search_indices), )
                         attn = [score.unsqueeze(0).unsqueeze(0).expand(1, 8, -1) for _ in range(2)] # （1，8, 16124）
                 else:
-                    attn,cls_tea = None,None
+                    attn,cls_tea = None, None
                     
-                
                 cls_tea = None if args.cl_alpha == 0. else cls_tea
 
-                # ***** 学生模型 *****
-                if args.use_attn_loss == True:
+                # ***** Student Model: Forward *****
+                if args.use_attention_loss == True or args.use_annotation_loss == True:
                     if args.baseline == 'dsmil':
                         # logits 是 DSMIL 的主类预测 + instance-level 预测。用两个都计算 loss
-                        logits, cls_loss, attn_loss, patch_num, keep_num = model.forward_with_distill_loss(bag,attn,labels_mask,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
+                        logits, cls_loss, attn_loss, annotation_loss, patch_num, keep_num = model.forward_with_distill_loss(bag,attn,labels_mask,args.anno_loss_type,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
                         logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                     else:
-                        logits, cls_loss, attn_loss, patch_num, keep_num = model.forward_with_distill_loss(bag,attn,labels_mask,cls_tea,i=epoch*len(loader)+i)
+                        logits, cls_loss, attn_loss, annotation_loss, patch_num, keep_num = model.forward_with_distill_loss(bag,attn,labels_mask,args.anno_loss_type,cls_tea,i=epoch*len(loader)+i)
                     
                 else:
                     if args.baseline == 'dsmil':
@@ -380,7 +398,7 @@ def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criteri
                         logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                     else:
                         logits, cls_loss,patch_num,keep_num = model(bag,attn,labels_mask,cls_tea,i=epoch*len(loader)+i)
-
+                 
             elif args.model == 'pure':
                 if args.baseline == 'dsmil':
                     logits, cls_loss,patch_num,keep_num = model.pure(bag)
@@ -394,25 +412,49 @@ def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criteri
                 logits = model(bag)
                 cls_loss,patch_num,keep_num = 0.,0.,0.
             
-            # 分类损失计算
+            # classification loss
             if logit_loss is None:
                 if args.loss == 'ce':
                     logit_loss = criterion(logits.view(batch_size,-1),label)
                 elif args.loss == 'bce':
                     logit_loss = criterion(logits.view(batch_size,-1),one_hot(label.view(batch_size,-1).float(),num_classes=2))
 
-        # 总Loss
-        if args.use_attn_loss == True:
-            # print("logit_loss",logit_loss)
-            # print("cls_loss",cls_loss)
-            # print("attn_loss",attn_loss)
-            # train_loss = args.cls_alpha * logit_loss +  cls_loss*args.cl_alpha + attn_loss*attn_alpha
-            train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha # !试一下只用attn_loss的实验
-        else:
-            train_loss = args.cls_alpha * logit_loss +  cls_loss*args.cl_alpha
+        # Overall Loss
+        # * Don't use uncertainty to combine annotation_loss & attention_loss
+        if args.uncertainty == False:
+            if args.use_attention_loss == True or args.use_annotation_loss == True:
+                # print("logit_loss",logit_loss)
+                # print("cls_loss",cls_loss)
+                # print("attn_loss",attn_loss)
+                # train_loss = args.cls_alpha * logit_loss +  cls_loss*args.cl_alpha + attn_loss*attn_alpha
+                if args.use_attention_loss == False: args.attn_alpha = 0.
+                if args.annotation_alpha == False: args.annotation_alpha = 0.
+                train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha + annotation_loss*args.annotation_alpha
+            else:
+                train_loss = args.cls_alpha * logit_loss + cls_loss*args.cl_alpha
+        
+        # * Use uncertainty to combine annotation_loss & attention_loss
+        elif args.uncertainty == True:
+            if epoch<args.start_using_annotation: # In the earlier epochs, we only learned with explanation.
+                train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha
+            else: # After certain epochs, we use human annotation
+                all_uncertainties = current_uncertainties
+                # choose top-k data according to current_uncertainties for human annotation
+                topk_slide_ids = sorted(current_uncertainties.items(), key=lambda x: x[1], reverse=True)[:args.top_k_for_annotation]
+                topk_ids = [slide_id for slide_id, uncertainty in topk_slide_ids]
+                # print("selected_indices",topk_ids)
+                if slide_id2 in topk_ids:
+                    # print(slide_id2, "in topk_ids")
+                    print("use annotation_loss")
+                    train_loss = args.cls_alpha * logit_loss + attn_loss * args.attn_alpha + annotation_loss * args.annotation_alpha
+                else:
+                    # print(slide_id2, "not in topk_ids")
+                    train_loss = args.cls_alpha * logit_loss + attn_loss * args.attn_alpha
+               
+
         train_loss = train_loss / args.accumulation_steps
         
-        # 梯度裁剪
+        # clip gradient
         if args.clip_grad > 0.:
             dispatch_clip_grad(
                 model_parameters(model),
@@ -421,6 +463,9 @@ def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criteri
         #if (i+1) % args.accumulation_steps == 0:
         train_loss.backward() # 对本 batch 的损失 train_loss 进行 反向传播，计算梯度
         optimizer.step() # 用计算出的梯度对模型参数进行更新（执行一次梯度下降）
+        
+        with torch.no_grad():
+            model.alphas.clamp_(-5.0, 5.0)
         
         # 如果开启了 --lr_supi（表示 每个 iteration 都要 step 一次学习率），就在这里更新学习率
         if args.lr_supi and scheduler is not None:
@@ -432,10 +477,17 @@ def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criteri
             else:
                 mm = args.mm
             if model_tea is not None:
-                if args.tea_type == 'same':
-                    pass
-                else: # 如果存在 teacher 模型，并且 tea_type 不是 'same'，就执行 ema_update()
-                    ema_update(model,model_tea,mm)
+                # *** Teacher Model: Update with EMA ***
+                if args.uncertainty: ema_update_edl(model,model_tea,mm)
+                else: ema_update(model,model_tea,mm)
+                # *** Teacher Model: Training the evidence head ***
+                alpha, cls_tea, attn = model_tea.forward_teacher_edl(bag)
+                num_classes = 2
+                y = one_hot_embedding(label, num_classes)
+                edl_loss = edl_my_loss(alpha, y.float(), epoch, num_classes, 10, device)
+                
+                edl_loss.backward()
+                optimizer_teacher.step()
         else:
             mm = 0.
 
@@ -468,7 +520,7 @@ def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criteri
     if not args.lr_supi and scheduler is not None: # 如果不是按 step 更新，而是按 epoch 更新，就在 epoch 末尾 step 一次
         scheduler.step()
     
-    return train_loss_log,start,end
+    return train_loss_log,start,end, all_uncertainties
 
 def val_loop(args,model,loader,device,criterion,early_stopping,epoch,model_tea=None):
     if model_tea is not None:
