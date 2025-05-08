@@ -226,22 +226,20 @@ class MHIM(nn.Module):
         return len_keep, mask_ids.unsqueeze(0) # 修改形状以对应一个batch
 
     @torch.no_grad() 
-    def forward_teacher(self,x): # 用于 teacher 模型前向推理
+    def forward_teacher(self, x, label): # 用于 teacher 模型前向推理
 
         x = self.patch_to_emb(x) # 将输入的 patch-level 特征 x 映射到嵌入空间（embedding），通常是一个线性层
         x = self.dp(x) # 应用 dropout 以增强模型鲁棒性
-
+        total_inst_loss = 0 
+        
         if self.baseline == 'dsmil': # 如果是 DSMIL 模型，encoder 输出三个值，取其中两个
             _,x,attn = self.online_encoder(x,return_attn=True)
         elif self.baseline in ["clam_sb", "clam_mb"]:
-            A, h = self.online_encoder(x.squeeze())    
-            A = torch.transpose(A, 1, 0)  # KxN
-            attn = F.softmax(A, dim=1)  # softmax over N
-            x = torch.mm(attn, h) 
+            x, total_inst_loss, _ = self.online_encoder(x, label)
         else: # 返回编码后的 bag-level 表示 x 和 attention 分数 attn
             x,attn = self.online_encoder(x,return_attn=True)
 
-        return x, attn
+        return x, attn, total_inst_loss
     
     @torch.no_grad()
     def forward_test(self, x, return_attn=False, no_norm=False):
@@ -314,7 +312,7 @@ class MHIM(nn.Module):
         return distill_loss
 
     # ** Just for Student Model **
-    def forward(self, x, attn=None,labels_mask=None,teacher_cls_feat=None,i=None):
+    def forward(self, x, attn=None, labels_mask=None, teacher_cls_feat=None, i=None, label=None):
         # x: 输入的 patch-level 特征（维度: [batch, n_patches, feature_dim]）。
         # attn: 上一步 teacher 模型生成的 attention，用于指导 masking。
         # teacher_cls_feat: teacher 输出的分类特征，用于计算蒸馏 loss。
@@ -324,7 +322,7 @@ class MHIM(nn.Module):
         x = self.dp(x)
 
         ps = x.size(1) # patch size
-
+        total_inst_loss = 0
         # *** Get Hard Mask (mask_ids)  ***
         # ** use human annotation **
         print("use_human_annotation1",self.use_human_annotation)
@@ -336,7 +334,7 @@ class MHIM(nn.Module):
         # elif self.select_mask:
         #     len_keep, mask_ids = self.get_mask(ps, i, attn) # 返回保留 patch 数量和 mask 索引
         else:
-            len_keep,mask_ids = ps,None
+            len_keep, mask_ids = ps, None
             
         # print("len_keep",len_keep) # 7882，也就是只保留mask_ids的前7882个patch
         # print("mask_ids",mask_ids.shape, mask_ids) # torch.Size([1, 40233])
@@ -344,25 +342,27 @@ class MHIM(nn.Module):
         
         if self.baseline == 'dsmil':
             # forward online network
-            student_logit,student_cls_feat= self.online_encoder(x,len_keep=len_keep,mask_ids=mask_ids,mask_enable=True)
+            student_logit, student_cls_feat= self.online_encoder(x, len_keep=len_keep, mask_ids=mask_ids, mask_enable=True)
 
             # cl loss 计算蒸馏损失：用 student 和 teacher 的分类特征算 soft target cross entropy
-            cls_loss= self.forward_cls_loss(student_cls_feat=student_cls_feat,teacher_cls_feat=teacher_cls_feat)
+            cls_loss = self.forward_cls_loss(student_cls_feat=student_cls_feat, teacher_cls_feat=teacher_cls_feat)
 
-            return student_logit, cls_loss, ps, len_keep
+        elif self.baseline in ["clam_sb", "clam_mb"]:
+            student_logit, total_inst_loss, _ = self.online_encoder(x, label, len_keep=len_keep, mask_ids=mask_ids)
+            cls_loss = 0 # SAJ no calculated for now
         else:
             # forward online network
-            student_cls_feat= self.online_encoder(x,len_keep=len_keep,mask_ids=mask_ids,mask_enable=True)
+            student_cls_feat = self.online_encoder(x, len_keep=len_keep, mask_ids=mask_ids, mask_enable=True)
 
             # prediction
             student_logit = self.predictor(student_cls_feat)
 
             # cl loss
-            cls_loss= self.forward_cls_loss(student_cls_feat=student_cls_feat,teacher_cls_feat=teacher_cls_feat)
+            cls_loss = self.forward_cls_loss(student_cls_feat=student_cls_feat, teacher_cls_feat=teacher_cls_feat)
 
-            return student_logit, cls_loss, ps, len_keep
+        return student_logit, cls_loss, ps, len_keep, total_inst_loss
     
-    def forward_with_distill_loss(self, x, attn=None,labels_mask=None,teacher_cls_feat=None,i=None):
+    def forward_with_distill_loss(self, x, attn=None, labels_mask=None, teacher_cls_feat=None, i=None, label=None):
         # x: 输入的 patch-level 特征（维度: [batch, n_patches, feature_dim]）。
         # attn: 上一步 teacher 模型生成的 attention，用于指导 masking或者计算蒸馏损失。
         # teacher_cls_feat: teacher 输出的分类特征，用于计算蒸馏 loss。
@@ -372,6 +372,7 @@ class MHIM(nn.Module):
         x = self.dp(x)
 
         ps = x.size(1) # patch size
+        total_inst_loss = 0
 
         # *** Get Hard Mask (mask_ids)  ***
         # ** use human annotation **
@@ -401,28 +402,10 @@ class MHIM(nn.Module):
             # attn_loss
             attn_loss = self.forward_attn_loss(student_attn=student_attn, teacher_attn=attn, mask_ids=mask_ids)
 
-            return student_logit, cls_loss, attn_loss, ps, len_keep
-        elif self.baseline == 'clam_sb':
-            if mask_ids is not None:
-                x, _,_ = self.masking(x, mask_ids, len_keep)
-            A, h = self.online_encoder(x.squeeze())  # NxK   
-            A = torch.transpose(A, 1, 0)  # KxN
-            A = F.softmax(A, dim=1)  # softmax over N
-            student_cls_feat = torch.mm(A, h) 
-            student_logit = self.predictor(student_cls_feat)
-            cls_loss= self.forward_cls_loss(student_cls_feat=student_cls_feat,teacher_cls_feat=teacher_cls_feat)
+        elif self.baseline in ['clam_sb', 'clam_mb']:
+            student_logit, total_inst_loss, _ = self.online_encoder(x, label, len_keep=len_keep, mask_ids=mask_ids)
+            cls_loss = 0 # SAJ no calculated for now
             attn_loss = self.forward_attn_loss(student_attn=student_attn, teacher_attn=attn, mask_ids=mask_ids)
-            return student_logit, cls_loss, attn_loss, ps, len_keep
-        elif self.baseline == "clam_mb": 
-            A, h = self.online_encoder(x.squeeze())  # NxK        
-            A = torch.transpose(A, 1, 0)  # KxN
-            A = F.softmax(A, dim=1)  # softmax over N
-            M = torch.mm(A, h) 
-            device = M.device
-            logits = torch.empty(1, len(self.predictor)).float().to(device)
-            for c in range(len(self.predictor)):
-                logits[0, c] = self.predictor[c](M[c])
-            x = logits
         else:
             # forward online network
             student_cls_feat, student_attn = self.online_encoder(x,len_keep=len_keep,mask_ids=mask_ids,mask_enable=True,return_attn=True)
@@ -436,4 +419,5 @@ class MHIM(nn.Module):
             # attn_loss
             attn_loss = self.forward_attn_loss(student_attn=student_attn, teacher_attn=attn, mask_ids=mask_ids)
 
-            return student_logit, cls_loss, attn_loss, ps, len_keep
+        return student_logit, cls_loss, attn_loss, ps, len_keep, total_inst_loss
+

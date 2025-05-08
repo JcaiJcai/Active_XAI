@@ -236,12 +236,14 @@ class CLAMMB(CLAMSB):
         self.subtyping = subtyping
         initialize_weights(self)
 
-    def forward(self, h, label=None, instance_eval=True):
+    def forward(self, h, label=None, instance_eval=True, mask_ids=None, len_keep=0):
+        if mask_ids is not None:
+            h, _,_ = self.masking(h, mask_ids, len_keep)
         device = h.device
         A, h = self.attention_net(h.squeeze())  # NxK        
         A = torch.transpose(A, 1, 0)  # KxN
         A = F.softmax(A, dim=1)  # softmax over N
-
+    
         if instance_eval:
             total_inst_loss = 0.0
             all_preds = []

@@ -34,7 +34,7 @@ def seed_torch(seed=2021):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False   
 
-def one_fold(args,k,ckc_metric,dataset):
+def one_fold(args, k, ckc_metric, dataset):
     seed_torch(args.seed)
     # loss_scaler = GradScaler() if args.amp else None # AMP（自动混合精度训练）
     loss_scaler = None
@@ -64,7 +64,7 @@ def one_fold(args,k,ckc_metric,dataset):
     
     mm_sche = None
     # 加载之前训练好的某折的模型作为初始的teacher模型
-    _teacher_init =args.teacher_init
+    _teacher_init = os.path.join(args.teacher_init, f"fold_{k}_model_best_auc.pt")
     
     # ** Load model **
     if args.model == 'mhim':
@@ -188,7 +188,7 @@ def one_fold(args,k,ckc_metric,dataset):
     
     for epoch in range(epoch_start, args.num_epoch):
         # ****** TRAIN (Teacher and Student)******
-        train_loss,start,end = train_loop(args,model,model_tea,train_loader,optimizer,device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch)
+        train_loss, start, end = train_loop(args,model,model_tea,train_loader,optimizer,device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch)
         train_time_meter.update(end-start) # 训练时间
         # stop: early stopping 是否触发了；threshold_optimal: 最优分类阈值（如果是二分类）
         
@@ -342,11 +342,11 @@ def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criteri
                     # ***** 教师模型 *****
                     # ! attn -> explanation
                     if args.explanation == "attention":
-                        cls_tea, attn = model_tea.forward_teacher(bag) # 用教师模型生成 attention 和预测概率
+                        cls_tea, attn, total_inst_loss = model_tea.forward_teacher(bag, label) # 用教师模型生成 attention 和预测概率
                         # attn_sum = attn[1].sum(dim=-1)
                         # print("!!!!!!!attn_sum",attn_sum) # attention并不是归一化之后的
                     elif args.explanation == "shap-approximate": 
-                        cls_tea, attn = model_tea.forward_teacher(bag)
+                        cls_tea, attn, total_inst_loss = model_tea.forward_teacher(bag, label)
                         # 用教师模型生成shap解释
                         # print("attn",len(attn), attn) # len是2说明这个attention对应的是两层的
                         attn_avg_lastlayer = attn[-1].mean(dim=1).view(-1)
@@ -368,18 +368,18 @@ def train_loop(args,model,model_tea,loader,optimizer,device,amp_autocast,criteri
                 if args.use_attn_loss:
                     if args.baseline == 'dsmil':
                         # logits 是 DSMIL 的主类预测 + instance-level 预测。用两个都计算 loss
-                        logits, cls_loss, attn_loss, patch_num, keep_num, total_inst_loss = model.forward_with_distill_loss(bag,attn,labels_mask,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
+                        logits, cls_loss, attn_loss, patch_num, keep_num, total_inst_loss = model.forward_with_distill_loss(bag, attn, labels_mask,cls_tea[0], i=epoch*len(loader)+i, label=label) # !!!!!
                         logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                     else:
-                        logits, cls_loss, attn_loss, patch_num, keep_num, total_inst_loss = model.forward_with_distill_loss(bag,attn,labels_mask,cls_tea,i=epoch*len(loader)+i)
+                        logits, cls_loss, attn_loss, patch_num, keep_num, total_inst_loss = model.forward_with_distill_loss(bag, attn, labels_mask, cls_tea, i=epoch*len(loader)+i, label=label)
                     
                 else:
                     if args.baseline == 'dsmil':
                         # logits 是 DSMIL 的主类预测 + instance-level 预测。用两个都计算 loss
-                        logits, cls_loss, patch_num, keep_num, total_inst_loss = model(bag,attn,labels_mask,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
+                        logits, cls_loss, patch_num, keep_num, total_inst_loss = model(bag,attn,labels_mask,cls_tea[0],i=epoch*len(loader)+i, label=label) # !!!!!
                         logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                     else:
-                        logits, cls_loss, patch_num, keep_num, total_inst_loss = model(bag, attn,labels_mask, cls_tea, i=epoch*len(loader)+i)
+                        logits, cls_loss, patch_num, keep_num, total_inst_loss = model(bag, attn,labels_mask, cls_tea, i=epoch*len(loader)+i, label=label)
 
             elif args.model == 'pure':
                 if args.baseline == 'dsmil':

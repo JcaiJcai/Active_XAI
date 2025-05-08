@@ -125,7 +125,7 @@ class SAttention(nn.Module):
         return x_soft_masked, mask, ids_restore
 
 
-    def forward(self, x, mask_ids=None, len_keep=None, return_attn=False,mask_enable=False):
+    def forward(self, x, mask_ids=None, len_keep=None, return_attn=False, mask_enable=False):
         # x: 输入特征，shape 是 [batch_size, num_patches, feature_dim]。
         # mask_ids, len_keep: 如果启用了 Mask，指定要保留哪些 patch。
         # return_attn: 是否返回 attention（用于解释）。
