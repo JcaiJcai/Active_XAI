@@ -1,17 +1,18 @@
 # 只使用attnloss，不用human_annotation mask
 #  train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha
 #!/bin/bash
-for top_k_for_annotation in 5 10 20 30; do
-    for annotation_alpha in 0.01 0.1 1 10; do
-        project_name="transmil_uncertainty_top${top_k_for_annotation}_${annotation_alpha}"
+for top_k_for_annotation in 20 30 40; do
+    for annotation_alpha in 0.001 0.01 0.1 1; do
+        seed=2023
+        project_name="transmil_uncertainty_top${top_k_for_annotation}_${annotation_alpha}_${seed}"
         # 每个实验的脚本文件路径
-        output_script="/u/jcai1/code/usefulxai/code/my_method/scripts/${project_name}.sh"
+        output_script="/u/jcai1/code/usefulxai/code/my_method/scripts2/${project_name}.sh"
 
     # 生成脚本文件
     cat > "$output_script" <<EOT
 #!/bin/bash
 #SBATCH --job-name=${project_name}
-#SBATCH --output=/u/jcai1/code/usefulxai/code/results/scripts/${project_name}.out
+#SBATCH --output=/u/jcai1/code/usefulxai/paper_results/pure/${project_name}.out
 #SBATCH --partition=gpuA40x4
 #SBATCH --mem=50G
 #SBATCH --nodes=1
@@ -29,9 +30,9 @@ cd /u/jcai1/code/usefulxai/code/my_method
 
 python3 main.py --project=${project_name} \
 --h5_folder_name=h5_files_labels \
---model_path=/u/jcai1/code/usefulxai/code/results \
+--model_path=/u/jcai1/code/usefulxai/paper_results/pure \
 --k_fold=3 \
---teacher_init=/u/jcai1/code/usefulxai/code/results/transmil_0405/fold_0_model_best_auc.pt \
+--teacher_init=/u/jcai1/code/usefulxai/paper_results/transmil_0507_1818 \
 --mask_ratio_h=0.03 \
 --mask_ratio_hr=0.5 \
 --mrh_sche \
@@ -41,7 +42,7 @@ python3 main.py --project=${project_name} \
 --mm_sche \
 --init_stu_type=fc \
 --attn_layer=0 \
---seed=2021 \
+--seed=${seed} \
 --use_attention_loss=True \
 --use_annotation_loss=True \
 --attn_alpha=1 \

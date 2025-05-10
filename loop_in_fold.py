@@ -364,19 +364,21 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                             cls_tea, attn = model_tea.forward_teacher(bag)
                         # attn_sum = attn[1].sum(dim=-1)
                         # print("!!!!!!!attn_sum",attn_sum) # attention is not normalized
-                    elif args.explanation == "shap-approximate": # Not available
-                        cls_tea, attn = model_tea.forward_teacher(bag)
-                        # 用教师模型生成shap解释
-                        # print("attn",len(attn), attn) # len是2说明这个attention对应的是两层的
-                        attn_avg_lastlayer = attn[-1].mean(dim=1).view(-1)
-                        # print("attn_avg_lastlayer",attn_avg_lastlayer.shape)
-                        attn_index = np.argsort(-attn_avg_lastlayer.detach().cpu().numpy())
-                        # print("attn_index",attn_index)
-                        # search_num = min(100, len(attn_index) // 2)
-                        # search_indices = attn_index[:search_num]
-                        # print("search_indices",search_indices)
-                        score = shapley.shapley_value(attn_index, bag, label, model_tea, device, args.baseline, subset_num=10).to(attn[0].device) # (len(search_indices), )
-                        attn = [score.unsqueeze(0).unsqueeze(0).expand(1, 8, -1) for _ in range(2)] # （1，8, 16124）
+                    elif args.explanation == "shap-approximate": # 用教师模型生成shap解释
+                        # *** 
+                        # cls_tea, attn = model_tea.forward_teacher(bag)
+                        # # print("attn",len(attn), attn) # len是2说明这个attention对应的是两层的
+                        # attn_avg_lastlayer = attn[-1].mean(dim=1).view(-1)
+                        # attn_index = np.argsort(-attn_avg_lastlayer.detach().cpu().numpy())
+                        # score = shapley.shapley_value(attn_index, bag, label, model_tea, device, args.baseline, subset_num=10).to(attn[0].device) # (len(search_indices), )
+                        # attn = [score.unsqueeze(0).unsqueeze(0).expand(1, 8, -1) for _ in range(2)] # （1，8, 16124）
+                        pt_path = "/u/jcai1/code/usefulxai/code/results/explanations/transmil_fold_0_shap1_2000/"+slide_id2+".pt"
+                        print(pt_path)
+                        shap_score = torch.load(pt_path, map_location='cpu', weights_only=False)
+                        shap_score = list(shap_score.values())[0]
+                        shap_score = torch.tensor(shap_score)
+                        shap_attn = shap_score.unsqueeze(0).unsqueeze(0).expand(1, 8, -1)
+                        attn = [shap_attn.clone() for _ in range(2)]
                 else:
                     attn,cls_tea = None, None
                     
@@ -420,6 +422,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                     logit_loss = criterion(logits.view(batch_size,-1),one_hot(label.view(batch_size,-1).float(),num_classes=2))
 
         # Overall Loss
+        # ! cls_loss is not used anymore in our code!!!!
         # * Don't use uncertainty to combine annotation_loss & attention_loss
         if args.uncertainty == False:
             if args.use_attention_loss == True or args.use_annotation_loss == True:
@@ -431,7 +434,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                 if args.annotation_alpha == False: args.annotation_alpha = 0.
                 train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha + annotation_loss*args.annotation_alpha
             else:
-                train_loss = args.cls_alpha * logit_loss + cls_loss*args.cl_alpha
+                train_loss = args.cls_alpha * logit_loss
         
         # * Use uncertainty to combine annotation_loss & attention_loss
         elif args.uncertainty == True:
@@ -446,7 +449,8 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                 if slide_id2 in topk_ids:
                     # print(slide_id2, "in topk_ids")
                     print("use annotation_loss")
-                    train_loss = args.cls_alpha * logit_loss + attn_loss * args.attn_alpha + annotation_loss * args.annotation_alpha
+                    # train_loss = args.cls_alpha * logit_loss + attn_loss * args.attn_alpha + annotation_loss * args.annotation_alpha
+                    train_loss = args.cls_alpha * logit_loss + annotation_loss * args.annotation_alpha
                 else:
                     # print(slide_id2, "not in topk_ids")
                     train_loss = args.cls_alpha * logit_loss + attn_loss * args.attn_alpha

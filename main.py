@@ -44,13 +44,10 @@ def main(args):
         # dataset.load_from_h5(True)
         print("use h5 files:",dataset.use_h5,"h5_folder_name:", dataset.h5_folder_name)
     
-    # args.split_dir
-    if args.split_dir is None:
-        args.split_dir = os.path.join('splits', args.task+'_{}'.format(int(args.label_frac*100)))
-    else:
-        args.split_dir = os.path.join('splits', args.split_dir)
+    args.split_dir = "splits/task_1_tumor_vs_normal_100"
     print('split_dir: ', args.split_dir)
     assert os.path.isdir(args.split_dir)
+    
     
     # *** Evaluation matrix *** 
     # acs   List of Accuracy scores: records the accuracy for each fold in cross-validation

@@ -108,6 +108,7 @@ def parse_arguments():
     parser.add_argument('--energy_alphas', default=None, type=list) # 
     parser.add_argument('--explained_model', default='none', type=str, help='Path to explained model')
     parser.add_argument('--uncertainty', default=False, type=bool, help='Whether calculate uncertainty score or not')
+    # parser.add_argument('--uncertainty', action='store_true', help='Enable uncertainty score calculation')
     parser.add_argument('--top_k_for_annotation', default=50, type=int, help='Number of images to be annotated')
     parser.add_argument('--start_using_annotation', default=40, type=int, help='From which epoch to use annotation')
     

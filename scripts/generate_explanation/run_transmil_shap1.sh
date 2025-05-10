@@ -9,7 +9,7 @@ for search_num in 2000 5000 10000; do
     cat > "$output_script" <<EOT
 #!/bin/bash
 #SBATCH --job-name=${project_name}
-#SBATCH --output=/u/jcai1/code/usefulxai/code/results/scripts/generate_explanation/${project_name}.out
+#SBATCH --output=/u/jcai1/code/usefulxai/code/results/out_files/generate_explanation/${project_name}.out
 #SBATCH --partition=gpuA40x4
 #SBATCH --mem=50G
 #SBATCH --nodes=1
@@ -18,16 +18,15 @@ for search_num in 2000 5000 10000; do
 #SBATCH --constraint=scratch
 #SBATCH --gpus-per-node=1
 #SBATCH --gpu-bind=closest
-#SBATCH --account=bdem-delta-gpu
+#SBATCH --account=bcqc-delta-gpu
 #SBATCH --no-requeue
 #SBATCH -t 24:00:00
 
-source /u/jcai1/miniconda3/etc/profile.d/conda.sh
-conda activate clam_latest
+source activate clam_latest
 cd /u/jcai1/code/usefulxai/code/my_method
 
 python3 main_explanation.py --project=${project_name} \
---explained_model=/u/jcai1/code/usefulxai/code/results/transmil_0405/fold_0_model_best_auc.pt \
+--explained_model=/u/jcai1/code/usefulxai/code/results/trained_models/transmil_0405/fold_0_model_best_auc.pt \
 --h5_folder_name=h5_files_labels \
 --k_fold=3 \
 --title=transmil \

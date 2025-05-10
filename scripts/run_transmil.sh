@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name="transmil"
-#SBATCH --output="/u/jcai1/code/usefulxai/paper_results/pure/scripts/transmil.out"
+#SBATCH --output="/u/jcai1/code/usefulxai/paper_results/pure/scripts/transmil2.out"
 #SBATCH --partition=gpuA40x4
 #SBATCH --mem=50G
 #SBATCH --nodes=1
@@ -16,7 +16,7 @@
 source activate clam_latest
 cd /u/jcai1/code/usefulxai/code/my_method
 
-python main.py --project=transmil \
+python main.py --project=transmil2 \
 --model_path=/u/jcai1/code/usefulxai/paper_results \
 --k_fold=3 \
 --title=transmil \

@@ -258,7 +258,8 @@ class MHIM(nn.Module):
         x = self.dp(x)
 
         if return_attn:
-            x,a = self.online_encoder(x,return_attn=True,no_norm=no_norm)
+            # x,a = self.online_encoder(x,return_attn=True,no_norm=no_norm)
+            x,a = self.online_encoder(x,return_attn=True)
         else:
             x = self.online_encoder(x)
 

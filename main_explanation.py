@@ -15,6 +15,9 @@ from loop_in_fold import one_fold
 from modules import mhim
 from utils_clam.utils import get_split_loader
 
+import functools
+print = functools.partial(print, flush=True)
+
 def seed_torch(seed=2021):
     import random
     random.seed(seed)
@@ -77,7 +80,18 @@ def load_trained_model(args, device):
     return model
 
 def main(args):
-    print(111)
+    print("start running", flush=True)
+    if "fold_0" in args.explained_model: fold = "fold_0"
+    elif "fold_1" in args.explained_model: fold = "fold_1"
+    elif "fold_2" in args.explained_model: fold = "fold_2"
+    
+    if "transmil" in args.explained_model: model_name = "transmil"
+    elif "dsmil" in args.explained_model: model_name = "dsmil"
+    elif "abmil" in args.explained_model: model_name = "abmil"
+    
+    output_dir = f"/u/jcai1/code/usefulxai/code/results/explanations/{model_name}_{fold}_{args.explanation}_{args.search_num}"
+    os.makedirs(output_dir, exist_ok=True)
+    
     seed_torch(args.seed)
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     
@@ -103,13 +117,21 @@ def main(args):
     model = load_trained_model(args, device)
     
     # *** Generate Explanation *** 
-    slide2patch_scores = {}
     if args.explanation == "perturbation":
         ex = Explainer_perturbation(device)
     elif args.explanation == "shap1":
         ex = Explainer_shap(device)
     i = 0
     for slide_id in slide_id2_list:
+        slide2patch_scores = {}
+        # Check whether heapmap already exists
+        output_file = f"{slide_id}.pt"
+        output_file = os.path.join(output_dir, output_file)
+        
+        if os.path.exists(output_file):
+            print(f"[INFO] Skipping {slide_id}, already explained.", flush=True)
+            continue
+
         print(slide_id)
         slide_data = dataset.get_data_by_slide_id(slide_id)
         if args.explanation == "perturbation":
@@ -124,7 +146,7 @@ def main(args):
         # *** Visualize patch scores in heatmap ***
         # patch_scores_plot, _ = clean_outliers_fliers(patch_scores)
         # _ = slide_heatmap_thumbnail()
-    torch.save(slide2patch_scores, 'explanation_'+args.explanation+'_'+str(args.search_num)+'.pt')
+        torch.save(slide2patch_scores, output_file)
 
         
 if __name__ == '__main__':
