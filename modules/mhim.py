@@ -456,7 +456,7 @@ class MHIM(nn.Module):
             # attn_loss
             attn_loss = self.forward_attn_loss(student_attn=student_attn, teacher_attn=attn, mask_ids=mask_ids)
             
-            if self.use_annotation_loss == True:
+            if self.use_annotation_loss:
                 annotation_loss = self.forward_annotation_loss(student_attn=student_attn, annotation=labels_mask, anno_loss_type=anno_loss_type, mask_ids=mask_ids)
 
             return student_logit, cls_loss, attn_loss, ps, len_keep
@@ -471,12 +471,14 @@ class MHIM(nn.Module):
             cls_loss= self.forward_cls_loss(student_cls_feat=student_cls_feat,teacher_cls_feat=teacher_cls_feat)
             
             # attn_loss
-            if self.use_attention_loss == True:
+            if self.use_attention_loss:
                 attn_loss = self.forward_attn_loss(student_attn=student_attn, teacher_attn=attn, mask_ids=mask_ids)
-            else: attn_loss = 0.
+            else:
+                attn_loss = 0.
             
-            if self.use_annotation_loss == True:
+            if self.use_annotation_loss:
                 annotation_loss = self.forward_annotation_loss(student_attn=student_attn, annotation=labels_mask, anno_loss_type=anno_loss_type, mask_ids=mask_ids)
-            else: annotation_loss = 0.
+            else: 
+                annotation_loss = 0.
             
             return student_logit, cls_loss, attn_loss, annotation_loss, ps, len_keep

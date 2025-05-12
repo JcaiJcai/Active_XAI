@@ -111,7 +111,8 @@ def parse_arguments():
     # parser.add_argument('--uncertainty', action='store_true', help='Enable uncertainty score calculation')
     parser.add_argument('--top_k_for_annotation', default=50, type=int, help='Number of images to be annotated')
     parser.add_argument('--start_using_annotation', default=40, type=int, help='From which epoch to use annotation')
-    
+    parser.add_argument('--strategy', type=str, default='random', choices=["random", "ours"], help='Which active learning strategy to use for picking the features')
+
     # Shap
     parser.add_argument('--search_num', default=None, type=int, help='Number of patches to calculate shap values')
   

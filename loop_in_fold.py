@@ -189,10 +189,17 @@ def one_fold(args,k,ckc_metric,dataset):
     
     train_time_meter = AverageMeter() # Timer
     current_uncertainties = None
-    
+    topk_ids = None
     for epoch in range(epoch_start, args.num_epoch):
-        # ****** TRAIN (Teacher and Student)******
-        train_loss, start, end, uncertainties = train_loop(args,model,model_tea,train_loader,optimizer,opt_evid, device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch, current_uncertainties)
+        # ****** TRAIN (Teacher and Student)******            
+        if args.uncertainty and current_uncertainties is not None:
+            if epoch >= args.start_using_annotation and topk_ids is None: 
+                if args.strategy == 'ours':
+                    topk_slide_ids = sorted(current_uncertainties.items(), key=lambda x: x[1], reverse=True)[:args.top_k_for_annotation]
+                    topk_ids = [slide_id for slide_id, uncertainty in topk_slide_ids]
+                elif args.strategy == 'random':
+                    topk_ids = np.random.choice(list(current_uncertainties.keys()), size=args.top_k_for_annotation, replace=False)
+        train_loss, start, end, uncertainties = train_loop(args,model,model_tea,train_loader,optimizer,opt_evid, device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch, topk_ids)
         train_time_meter.update(end-start) # Training time
         
         if epoch % 20 == 0:
@@ -298,7 +305,7 @@ def one_fold(args,k,ckc_metric,dataset):
         
     return [acs,pre,rec,fs,auc,te_auc,te_fs]
 
-def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch, current_uncertainties):
+def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch, topk_ids):
     start = time.time()
 
     loss_cls_meter = AverageMeter() # logit loss
@@ -306,7 +313,8 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
     patch_num_meter = AverageMeter() # 输入的 patch 数
     keep_num_meter = AverageMeter() # “保留”的 patch 数（例如某些掩码操作后剩下的）
     mm_meter = AverageMeter() # EMA momentum value
-    
+            
+            
     train_loss_log = 0. # 最终返回的平均损失
     
     # 将主模型和 teacher 模型都设置为训练模式
@@ -352,7 +360,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                     # ***** Teacher Model (generate prediction and attention without back propagation) *****
                     # ! attn -> explanation
                     if args.explanation == "attention":
-                        if args.uncertainty == True: # and epoch>0.5*args.num_epoch-1:
+                        if args.uncertainty: # and epoch>0.5*args.num_epoch-1:
                             # Use teacher model to generate prediction and attention
                             alpha, cls_tea, attn = model_tea.forward_teacher_edl(bag)
                             K = alpha.shape[1] # 类别数
@@ -385,7 +393,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                 cls_tea = None if args.cl_alpha == 0. else cls_tea
 
                 # ***** Student Model: Forward *****
-                if args.use_attention_loss == True or args.use_annotation_loss == True:
+                if args.use_attention_loss or args.use_annotation_loss:
                     if args.baseline == 'dsmil':
                         # logits 是 DSMIL 的主类预测 + instance-level 预测。用两个都计算 loss
                         logits, cls_loss, attn_loss, annotation_loss, patch_num, keep_num = model.forward_with_distill_loss(bag,attn,labels_mask,args.anno_loss_type,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
@@ -424,28 +432,26 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
         # Overall Loss
         # ! cls_loss is not used anymore in our code!!!!
         # * Don't use uncertainty to combine annotation_loss & attention_loss
-        if args.uncertainty == False:
-            if args.use_attention_loss == True or args.use_annotation_loss == True:
+        if not args.uncertainty:
+            if args.use_attention_loss or args.use_annotation_loss:
                 # print("logit_loss",logit_loss)
                 # print("cls_loss",cls_loss)
                 # print("attn_loss",attn_loss)
                 # train_loss = args.cls_alpha * logit_loss +  cls_loss*args.cl_alpha + attn_loss*attn_alpha
-                if args.use_attention_loss == False: args.attn_alpha = 0.
-                if args.annotation_alpha == False: args.annotation_alpha = 0.
-                train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha + annotation_loss*args.annotation_alpha
+                if not args.use_attention_loss: 
+                    args.attn_alpha = 0.
+                if not args.annotation_alpha: 
+                    args.annotation_alpha = 0.
+                train_loss = args.cls_alpha * logit_loss + attn_loss * args.attn_alpha + annotation_loss * args.annotation_alpha
             else:
                 train_loss = args.cls_alpha * logit_loss
         
         # * Use uncertainty to combine annotation_loss & attention_loss
-        elif args.uncertainty == True:
-            if epoch<args.start_using_annotation: # In the earlier epochs, we only learned with explanation.
+        elif args.uncertainty:
+            if epoch < args.start_using_annotation: # In the earlier epochs, we only learned with explanation.
                 train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha
             else: # After certain epochs, we use human annotation
-                all_uncertainties = current_uncertainties
                 # choose top-k data according to current_uncertainties for human annotation
-                topk_slide_ids = sorted(current_uncertainties.items(), key=lambda x: x[1], reverse=True)[:args.top_k_for_annotation]
-                topk_ids = [slide_id for slide_id, uncertainty in topk_slide_ids]
-                # print("selected_indices",topk_ids)
                 if slide_id2 in topk_ids:
                     # print(slide_id2, "in topk_ids")
                     print("use annotation_loss")
