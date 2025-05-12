@@ -12,6 +12,7 @@ from torch.nn.functional import one_hot
 from contextlib import suppress
 import time
 import random
+import copy
 
 from timm.utils import AverageMeter,dispatch_clip_grad
 from timm.models import  model_parameters
@@ -35,7 +36,7 @@ def seed_torch(seed=2021):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False   
 
-def one_fold(args,k,ckc_metric,dataset):
+def one_fold(args,fold_k,ckc_metric,dataset):
     seed_torch(args.seed)
     # loss_scaler = GradScaler() if args.amp else None # AMP (Automatic Mixed Precision Training)
     loss_scaler = None
@@ -45,7 +46,7 @@ def one_fold(args,k,ckc_metric,dataset):
     acs,pre,rec,fs,auc,te_auc,te_fs = ckc_metric
     
     # *** Load Data ***
-    train_dataset, val_dataset, test_dataset = dataset.return_splits(from_id=False, use_h5=args.use_h5, h5_folder_name=args.h5_folder_name, csv_path='{}/splits_{}.csv'.format(args.split_dir, k))
+    train_dataset, val_dataset, test_dataset = dataset.return_splits(from_id=False, use_h5=args.use_h5, h5_folder_name=args.h5_folder_name, csv_path='{}/splits_{}.csv'.format(args.split_dir, fold_k))
     print('\nInit Loaders...', end=' ')
     
     print("train_dataset",train_dataset)
@@ -61,39 +62,21 @@ def one_fold(args,k,ckc_metric,dataset):
     mm_sche = None
     # Load the previously trained model from a specific fold as the initial teacher model
     if not args.teacher_init.endswith('.pt'):
-        _str = 'fold_{fold}_model_best_auc.pt'.format(fold=k)
+        _str = 'fold_{fold}_model_best_auc.pt'.format(fold=fold_k)
         _teacher_init = os.path.join(args.teacher_init,_str)
     else:
         _teacher_init =args.teacher_init
     
     # ** Load model **
     if args.model == 'mhim':
-        if args.mrh_sche:
-            # Scheduler controls the step-wise decay of mask_ratio_h over epochs/iterations (using cosine decay)
-            mrh_sche = cosine_scheduler(args.mask_ratio_h, # Initial value
-                                        0., # Final value
-                                        epochs=args.num_epoch,
-                                        niter_per_ep=len(train_loader)
-                                        )
-        else:
-            mrh_sche = None
-
         model_params = {
             'baseline': args.baseline,
             'dropout': args.dropout,
-            'mask_ratio' : args.mask_ratio, # Global masking ratio
             'n_classes': args.n_classes,
             'temp_t': args.temp_t, # Temperature parameter
             'act': args.act, # Activation function
             'head': args.n_heads,
-            'msa_fusion': args.msa_fusion,  # Fusion method for multi-head attention
-            # High-level, recovery, high-level re-mask, and low-level masking ratios
-            'mask_ratio_h': args.mask_ratio_h,
-            'mask_ratio_hr': args.mask_ratio_hr,
-            'mask_ratio_l': args.mask_ratio_l,
-            'mrh_sche': mrh_sche, # Masking scheduler
             'da_act': args.da_act, # Activation function related to data augmentation
-            'attn_layer': args.attn_layer, # Configuration for attention layers
             'use_human_mask': args.use_human_mask,
             'use_annotation_loss': args.use_annotation_loss,
             'use_attention_loss': args.use_attention_loss,
@@ -188,16 +171,18 @@ def one_fold(args,k,ckc_metric,dataset):
     opt_te_auc,opt_tea_auc,opt_te_fs,opt_te_tea_auc,opt_te_tea_fs  = 0., 0., 0., 0., 0.
     
     train_time_meter = AverageMeter() # Timer
-    current_uncertainties = None
+    fixed_topk_ids = None
+    opt_uncertainty = None
     
     for epoch in range(epoch_start, args.num_epoch):
         # ****** TRAIN (Teacher and Student)******
-        train_loss, start, end, uncertainties = train_loop(args,model,model_tea,train_loader,optimizer,opt_evid, device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch, current_uncertainties)
+        # uncertainty: 当前模型计算出来的uncertainty
+        train_loss, start, end, fixed_topk_ids, uncertainty = train_loop(args,model,model_tea,train_loader,optimizer,opt_evid, device,amp_autocast,criterion,loss_scaler,scheduler,fold_k,mm_sche,epoch, fixed_topk_ids, opt_uncertainty)
         train_time_meter.update(end-start) # Training time
         
         if epoch % 20 == 0:
-            print(f"[Epoch {epoch}] all_uncertainties:")
-            print(uncertainties)
+            print(f"[Epoch {epoch}] fixed_topk_ids:", fixed_topk_ids)
+            print(f"[Epoch {epoch}] uncertainty:", uncertainty) # fixed_topk_ids和uncertainty在固定epoch之后应该保持不变
         # ****** EVALUATE (Student) ******
         # stop: whether early stopping was triggered; threshold_optimal: the optimal classification threshold (for binary classification)
         stop,accuracy, auc_value, precision, recall, fscore, test_loss, threshold_optimal = val_loop(args,model,val_loader,device,criterion,early_stopping,epoch,model_tea)
@@ -209,7 +194,7 @@ def one_fold(args,k,ckc_metric,dataset):
             
             if auc_value_tea > opt_tea_auc: # If the current teacher model's AUC is better than the previous best, update it
                 opt_tea_auc = auc_value_tea
-                current_uncertainties = uncertainties
+                opt_uncertainty = copy.deepcopy(uncertainty) # !opt_uncertainty: The uncertainty of the current optimal model. Once fixed_topk_ids is fixed, data will no longer be selected based on it
 
         # ********* TEST (Student) *********
         if args.always_test:
@@ -248,7 +233,7 @@ def one_fold(args,k,ckc_metric,dataset):
             'model': model.state_dict(), # student 模型的参数
             'teacher': model_tea.state_dict() if model_tea is not None else None, # 如果有 teacher 模型，就把它的参数也保存；否则设为 None
         }
-        torch.save(best_pt, os.path.join(args.model_path, 'fold_{fold}_model_best_auc.pt'.format(fold=k))) # 保存这组参数到本地文件系统
+        torch.save(best_pt, os.path.join(args.model_path, 'fold_{fold}_model_best_auc.pt'.format(fold=fold_k))) # 保存这组参数到本地文件系统
         
         # save checkpoint 保存随机状态（用于完全复现）
         random_state = {
@@ -262,7 +247,7 @@ def one_fold(args,k,ckc_metric,dataset):
             'lr_sche': scheduler.state_dict(), # 学习率调度器状态
             'optimizer': optimizer.state_dict(),
             'epoch': epoch+1, # 当前轮次 +1，resume 时从下轮开始
-            'k': k, # 当前是第几折 fold
+            'k': fold_k, # 当前是第几折 fold
             'early_stop': early_stopping.state_dict(), # # early stopping 的内部状态
             'random': random_state,
             'ckc_metric': [acs,pre,rec,fs,auc,te_auc,te_fs], #  # 当前累计的各类交叉验证指标
@@ -275,7 +260,7 @@ def one_fold(args,k,ckc_metric,dataset):
         if stop: break
         
     # 加载当前折的最优模型参数文件，并把它恢复到 student 模型 model 和（如果有）teacher 模型 model_tea 中
-    best_std = torch.load(os.path.join(args.model_path, 'fold_{fold}_model_best_auc.pt'.format(fold=k))) # 加载当前第 k 折交叉验证的最优模型权重文件
+    best_std = torch.load(os.path.join(args.model_path, 'fold_{fold}_model_best_auc.pt'.format(fold=fold_k))) # 加载当前第 k 折交叉验证的最优模型权重文件
     info = model.load_state_dict(best_std['model']) # 将保存的 student 模型参数加载到当前模型 model 中
     print(info)
     if model_tea is not None and best_std['teacher'] is not None:
@@ -298,7 +283,8 @@ def one_fold(args,k,ckc_metric,dataset):
         
     return [acs,pre,rec,fs,auc,te_auc,te_fs]
 
-def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,amp_autocast,criterion,loss_scaler,scheduler,k,mm_sche,epoch, current_uncertainties):
+def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,amp_autocast,criterion,loss_scaler,scheduler,fold_k,mm_sche,epoch, fixed_topk_ids=None, opt_uncertainty=None):
+    # ! opt_uncertainty是用于选topk annotation的
     start = time.time()
 
     loss_cls_meter = AverageMeter() # logit loss
@@ -315,6 +301,23 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
         model_tea.train()
         
     all_uncertainties = {}
+    
+    if args.uncertainty == True:
+        if epoch<args.start_using_annotation: topk_ids=None
+        elif epoch==args.start_using_annotation:
+            print("\n" + "="*30)
+            print(f"[START ANNOTATION] Epoch {epoch}: Human annotation begins on selected samples!")
+            if args.uncertainty_random == False:
+                # Choose top-k data according to current_uncertainties for human annotation
+                topk_slide_ids = sorted(opt_uncertainty.items(), key=lambda x: x[1], reverse=True)[:args.top_k_for_annotation]
+                topk_ids = [slide_id for slide_id, uncertainty in topk_slide_ids]
+            else: # Random assign annotations
+                all_slide_ids = list(opt_uncertainty.keys())
+                topk_ids = random.sample(all_slide_ids, k=args.top_k_for_annotation)
+            print(f"Used ncertainties:",opt_uncertainty)
+            print(f"Selected indices:",topk_ids)
+        elif epoch>args.start_using_annotation:
+            topk_ids=fixed_topk_ids
 
     for i, data in enumerate(loader): # i - batch index
         # data[0]: features(36710, 1024)
@@ -364,21 +367,21 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                             cls_tea, attn = model_tea.forward_teacher(bag)
                         # attn_sum = attn[1].sum(dim=-1)
                         # print("!!!!!!!attn_sum",attn_sum) # attention is not normalized
-                    elif args.explanation == "shap-approximate": # 用教师模型生成shap解释
-                        # *** 
+                    elif args.explanation == "shap1": # 用教师模型生成shap解释
                         # cls_tea, attn = model_tea.forward_teacher(bag)
                         # # print("attn",len(attn), attn) # len是2说明这个attention对应的是两层的
                         # attn_avg_lastlayer = attn[-1].mean(dim=1).view(-1)
                         # attn_index = np.argsort(-attn_avg_lastlayer.detach().cpu().numpy())
                         # score = shapley.shapley_value(attn_index, bag, label, model_tea, device, args.baseline, subset_num=10).to(attn[0].device) # (len(search_indices), )
                         # attn = [score.unsqueeze(0).unsqueeze(0).expand(1, 8, -1) for _ in range(2)] # （1，8, 16124）
-                        pt_path = "/u/jcai1/code/usefulxai/code/results/explanations/transmil_fold_0_shap1_2000/"+slide_id2+".pt"
-                        print(pt_path)
+                        pt_path = "/u/jcai1/code/usefulxai/code/results/explanations/transmil_fold_"+str(fold_k)+"_shap1_2000/"+slide_id2+".pt"
+                        # print(pt_path)
                         shap_score = torch.load(pt_path, map_location='cpu', weights_only=False)
                         shap_score = list(shap_score.values())[0]
-                        shap_score = torch.tensor(shap_score)
+                        shap_score = torch.tensor(shap_score, device=device)
                         shap_attn = shap_score.unsqueeze(0).unsqueeze(0).expand(1, 8, -1)
                         attn = [shap_attn.clone() for _ in range(2)]
+                        cls_tea, _ = model_tea.forward_teacher(bag)
                 else:
                     attn,cls_tea = None, None
                     
@@ -423,7 +426,8 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
 
         # Overall Loss
         # ! cls_loss is not used anymore in our code!!!!
-        # * Don't use uncertainty to combine annotation_loss & attention_loss
+        
+        # * Annotation_loss & attention_loss. No uncertainty
         if args.uncertainty == False:
             if args.use_attention_loss == True or args.use_annotation_loss == True:
                 # print("logit_loss",logit_loss)
@@ -438,21 +442,25 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
         
         # * Use uncertainty to combine annotation_loss & attention_loss
         elif args.uncertainty == True:
+        
+            # In the earlier epochs, we only learned with explanation.
             if epoch<args.start_using_annotation: # In the earlier epochs, we only learned with explanation.
                 train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha
-            else: # After certain epochs, we use human annotation
-                all_uncertainties = current_uncertainties
-                # choose top-k data according to current_uncertainties for human annotation
-                topk_slide_ids = sorted(current_uncertainties.items(), key=lambda x: x[1], reverse=True)[:args.top_k_for_annotation]
-                topk_ids = [slide_id for slide_id, uncertainty in topk_slide_ids]
-                # print("selected_indices",topk_ids)
+                
+            # At a predifined epoch, choose top-k data according to current_uncertainties for human annotation.
+            elif epoch==args.start_using_annotation:
                 if slide_id2 in topk_ids:
-                    # print(slide_id2, "in topk_ids")
-                    print("use annotation_loss")
-                    # train_loss = args.cls_alpha * logit_loss + attn_loss * args.attn_alpha + annotation_loss * args.annotation_alpha
+                    # print("use annotation_loss",slide_id2)
                     train_loss = args.cls_alpha * logit_loss + annotation_loss * args.annotation_alpha
                 else:
-                    # print(slide_id2, "not in topk_ids")
+                    train_loss = args.cls_alpha * logit_loss + attn_loss * args.attn_alpha
+            
+            # After certain epochs, we use fixed_topk_ids
+            else: 
+                if slide_id2 in fixed_topk_ids:
+                    # print("use annotation_loss",slide_id2)
+                    train_loss = args.cls_alpha * logit_loss + annotation_loss * args.annotation_alpha
+                else:
                     train_loss = args.cls_alpha * logit_loss + attn_loss * args.attn_alpha
                
 
@@ -519,12 +527,14 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
 
         train_loss_log = train_loss_log + train_loss.item() 
 
+
     end = time.time()
     train_loss_log = train_loss_log/len(loader) # 整轮平均训练损失
     if not args.lr_supi and scheduler is not None: # 如果不是按 step 更新，而是按 epoch 更新，就在 epoch 末尾 step 一次
         scheduler.step()
     
-    return train_loss_log,start,end, all_uncertainties
+    # !返回的all_uncertainties是逐时更新的，我们不用这个来选topk_ids，因为直接用fixed_topk_ids
+    return train_loss_log,start,end, topk_ids, all_uncertainties
 
 def val_loop(args,model,loader,device,criterion,early_stopping,epoch,model_tea=None):
     if model_tea is not None:

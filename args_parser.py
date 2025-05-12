@@ -7,9 +7,8 @@ def parse_arguments():
     
     
     # Dataset 
-    parser.add_argument('--datasets', default='camelyon16', type=str, help='[camelyon16, tcga]')
+    parser.add_argument('--datasets', default='camelyon16', type=str, help='[camelyon16, her2]')
     parser.add_argument('--h5_folder_name', type=str, default='h5_files_labels', choices=['h5_files', 'h5_files_annotations', 'h5_files_labels','None']) # h5_files_annotations: 根据annotation过滤后的数据集h5_files_annotations，对于tumor数据，只保留注释区域，对于normal数据则不变；h5_files_labels: 根据annotation为每个坐标赋予标签（0，1，2）
-    parser.add_argument('--tcga_max_patch', default=-1, type=int, help='Max Number of patch in TCGA [-1]')
     parser.add_argument('--fix_loader_random', action='store_true', help='Fix random seed of dataloader')
     parser.add_argument('--fix_train_random', action='store_true', help='Fix random seed of Training')
     parser.add_argument('--val_ratio', default=0., type=float, help='Val-set ratio')
@@ -22,7 +21,7 @@ def parse_arguments():
     parser.add_argument('--split_dir', type=str, default=None, # Jie
                     help='manually specify the set of splits to use, ' 
                     +'instead of infering from the task and label_frac argument (default: None)')
-    parser.add_argument('--task', type=str, choices=['task_1_tumor_vs_normal',  'task_2_tumor_subtyping']) # Jie
+    # parser.add_argument('--task', type=str, choices=['task_1_tumor_vs_normal',  'task_2_tumor_subtyping']) # Jie
     parser.add_argument('--label_frac', type=float, default=1.0, # Jie
                     help='fraction of training labels (default: 1.0)')
     
@@ -37,25 +36,26 @@ def parse_arguments():
     parser.add_argument('--loss', default='ce', type=str, help='Classification Loss [ce, bce]')
     parser.add_argument('--opt', default='adam', type=str, help='Optimizer [adam, adamw]')
     parser.add_argument('--save_best_model_stage', default=0., type=float, help='See DTFD')
-    parser.add_argument('--model', default='mhim', type=str, help='Model name') ###################
-    # parser.add_argument('--model_type', type=str, choices=['clam_sb', 'clam_mb', 'mil'], default='clam_sb', 
-    #                 help='type of model (default: clam_sb, clam w/ single attention branch)') ###################
     parser.add_argument('--seed', default=2021, type=int, help='random number [2021]' )
+    parser.add_argument('--always_test', action='store_true', help='Test model in the training phase') # train的时候每轮都要test
+    parser.add_argument('--best_thr_val', action='store_true', help='Cal the best thr with val set in the test phase.')
+    parser.add_argument('--testing', action='store_true', default=False, help='debugging tool') # Jie
+    parser.add_argument('--weighted_sample', action='store_true', default=False, help='enable weighted sampling') 
+    
+    
+    # Optimizer & Learning Rate 
     parser.add_argument('--lr', default=2e-4, type=float, help='Initial learning rate [0.0002]')
     parser.add_argument('--lr_sche', default='cosine', type=str, help='Deacy of learning rate [cosine, step, const]')
     parser.add_argument('--lr_supi', action='store_true', help='LR scheduler update per iter')
     parser.add_argument('--weight_decay', default=1e-5, type=float, help='Weight decay [5e-3]')
     parser.add_argument('--accumulation_steps', default=1, type=int, help='Gradient accumulate')
     parser.add_argument('--clip_grad', default=.0, type=float, help='Gradient clip')
-    parser.add_argument('--always_test', action='store_true', help='Test model in the training phase') # train的时候每轮都要test
-    parser.add_argument('--best_thr_val', action='store_true', help='Cal the best thr with val set in the test phase. Thanks Weiyi Wu!')
-    parser.add_argument('--testing', action='store_true', default=False, help='debugging tool') # Jie
-    parser.add_argument('--weighted_sample', action='store_true', default=False, help='enable weighted sampling') # Jie
+    
+
     # Model
-    # Other models
+    parser.add_argument('--model', default='mhim', type=str, help='Model name') ###################
     parser.add_argument('--ds_average', action='store_true', help='DSMIL hyperparameter')
-    # Our
-    parser.add_argument('--baseline', default='selfattn', type=str, help='Baselin model [attn,selfattn]') ################
+    parser.add_argument('--baseline', default='selfattn', type=str, help='Baselin model [attn,selfattn]')
     parser.add_argument('--act', default='relu', type=str, help='Activation func in the projection head [gelu,relu]')
     parser.add_argument('--dropout', default=0.25, type=float, help='Dropout in the projection head')
     parser.add_argument('--n_heads', default=8, type=int, help='Number of head in the MSA')
@@ -68,13 +68,13 @@ def parse_arguments():
 
     # MHIM
     # Mask ratio
-    parser.add_argument('--mask_ratio', default=0., type=float, help='Random mask ratio')
-    parser.add_argument('--mask_ratio_l', default=0., type=float, help='Low attention mask ratio')
-    parser.add_argument('--mask_ratio_h', default=0., type=float, help='High attention mask ratio')
-    parser.add_argument('--mask_ratio_hr', default=1., type=float, help='Randomly high attention mask ratio')
-    parser.add_argument('--mrh_sche', action='store_true', help='Decay of HAM') # 是否动态调整 mask_ratio_h
-    parser.add_argument('--msa_fusion', default='vote', type=str, help='[mean,vote]')
-    parser.add_argument('--attn_layer', default=0, type=int) # 根据第几层的attn做mask，默认为0
+    # parser.add_argument('--mask_ratio', default=0., type=float, help='Random mask ratio')
+    # parser.add_argument('--mask_ratio_l', default=0., type=float, help='Low attention mask ratio')
+    # parser.add_argument('--mask_ratio_h', default=0., type=float, help='High attention mask ratio')
+    # parser.add_argument('--mask_ratio_hr', default=1., type=float, help='Randomly high attention mask ratio')
+    # parser.add_argument('--mrh_sche', action='store_true', help='Decay of HAM') # 是否动态调整 mask_ratio_h
+    # parser.add_argument('--msa_fusion', default='vote', type=str, help='[mean,vote]')
+    # parser.add_argument('--attn_layer', default=0, type=int) # 根据第几层的attn做mask，默认为0
     
     # Siamese framework
     parser.add_argument('--cl_alpha', default=0., type=float, help='Auxiliary loss alpha')
@@ -97,8 +97,8 @@ def parse_arguments():
     parser.add_argument('--no_log', action='store_true', help='Without log')
     parser.add_argument('--model_path', default=None, type=str, help='Output path')
     
-    # Jie
-    parser.add_argument('--explanation', type=str, default="attention", choices=["attention", "shap1", "shap2"])
+    # Active Learning
+    parser.add_argument('--explanation', type=str, default="attention", choices=["attention", "shap1", "perturbation"])
     parser.add_argument('--use_human_mask', type=bool, default=False)
     parser.add_argument('--use_attention_loss', type=bool, default=False, help='Enable attention-based auxiliary loss')
     parser.add_argument('--attn_alpha', default=1., type=float, help='Weight for attention loss')
@@ -107,8 +107,8 @@ def parse_arguments():
     parser.add_argument('--anno_loss_type', default="energy", type=str, choices=["L1", "L2", "energy", "entropy"])
     parser.add_argument('--energy_alphas', default=None, type=list) # 
     parser.add_argument('--explained_model', default='none', type=str, help='Path to explained model')
-    parser.add_argument('--uncertainty', default=False, type=bool, help='Whether calculate uncertainty score or not')
-    # parser.add_argument('--uncertainty', action='store_true', help='Enable uncertainty score calculation')
+    parser.add_argument('--uncertainty_random', action='store_true', help='Randomly assign uncertainty score')
+    parser.add_argument('--uncertainty', action='store_true', help='Enable uncertainty score calculation')
     parser.add_argument('--top_k_for_annotation', default=50, type=int, help='Number of images to be annotated')
     parser.add_argument('--start_using_annotation', default=40, type=int, help='From which epoch to use annotation')
     

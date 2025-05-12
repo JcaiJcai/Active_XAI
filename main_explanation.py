@@ -89,7 +89,10 @@ def main(args):
     elif "dsmil" in args.explained_model: model_name = "dsmil"
     elif "abmil" in args.explained_model: model_name = "abmil"
     
-    output_dir = f"/u/jcai1/code/usefulxai/code/results/explanations/{model_name}_{fold}_{args.explanation}_{args.search_num}"
+    if args.explanation=="perturbation":
+        output_dir = f"/u/jcai1/code/usefulxai/paper_results/explanations/{model_name}_{fold}_{args.explanation}"
+    elif args.explanation=="shap1":
+        output_dir = f"/u/jcai1/code/usefulxai/paper_results/explanations/{model_name}_{fold}_{args.explanation}_{args.search_num}"
     os.makedirs(output_dir, exist_ok=True)
     
     seed_torch(args.seed)
@@ -104,12 +107,7 @@ def main(args):
         args.n_classes=2
         args.task = "task_1_tumor_vs_normal"
         dataset, slide_id2_list = get_data_list_camelyon16(args)
-    
-    # args.split_dir
-    if args.split_dir is None:
-        args.split_dir = os.path.join('splits', args.task+'_{}'.format(int(args.label_frac*100)))
-    else:
-        args.split_dir = os.path.join('splits', args.split_dir)
+        args.split_dir = "/u/jcai1/code/usefulxai/code/my_method/splits/camelyon16_3fold"
     print('split_dir: ', args.split_dir)
     assert os.path.isdir(args.split_dir)
     
@@ -120,19 +118,18 @@ def main(args):
     if args.explanation == "perturbation":
         ex = Explainer_perturbation(device)
     elif args.explanation == "shap1":
-        ex = Explainer_shap(device)
+        ex = Explainer_shap(device, MIL_model=model_name)
     i = 0
     for slide_id in slide_id2_list:
+        print(slide_id)
         slide2patch_scores = {}
         # Check whether heapmap already exists
         output_file = f"{slide_id}.pt"
         output_file = os.path.join(output_dir, output_file)
-        
         if os.path.exists(output_file):
             print(f"[INFO] Skipping {slide_id}, already explained.", flush=True)
             continue
 
-        print(slide_id)
         slide_data = dataset.get_data_by_slide_id(slide_id)
         if args.explanation == "perturbation":
             patch_scores = ex.explain(slide_data, model, 'drop') #drop/keep
@@ -140,14 +137,14 @@ def main(args):
             patch_scores = ex.explain(slide_data, model, args.search_num)
         patch_scores = patch_scores[0] if len(patch_scores.shape) > 1 else patch_scores
         
-        patch_scores = patch_scores.squeeze()
-        slide2patch_scores[slide_id] = patch_scores
+        patch_scores = patch_scores.squeeze() # patch_scores need to be an array with len N
+        slide2patch_scores[slide_id] = patch_scores 
         
-        # *** Visualize patch scores in heatmap ***
+        # Visualize patch scores in heatmap
         # patch_scores_plot, _ = clean_outliers_fliers(patch_scores)
         # _ = slide_heatmap_thumbnail()
+        
         torch.save(slide2patch_scores, output_file)
-
         
 if __name__ == '__main__':
     

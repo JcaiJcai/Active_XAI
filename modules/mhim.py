@@ -313,6 +313,7 @@ class MHIM(nn.Module):
         for i in range(len(student_attn)):
             if teacher_attn is not None:
                 # print(teacher_attn[i].shape, student_attn[i].shape, keep_mask.shape)
+                # print(teacher_attn[i].device, keep_mask.device)
                 teacher_masked = teacher_attn[i] * keep_mask
                 student_masked = student_attn[i] * keep_mask
                 distill_loss += - (teacher_masked.softmax(dim=-1) * torch.log_softmax(student_masked, dim=-1)).sum(dim=-1).mean()
