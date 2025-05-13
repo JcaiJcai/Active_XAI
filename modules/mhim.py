@@ -279,7 +279,7 @@ class MHIM(nn.Module):
         ps = x.size(1)
 
         if self.baseline == 'dsmil':
-            x, _, attn = self.online_encoder(x, return_attn=True)
+            logits, x, attn = self.online_encoder(x, return_attn=True)
         else:
             x, attn = self.online_encoder(x, return_attn=True)
             logits = self.predictor(x)

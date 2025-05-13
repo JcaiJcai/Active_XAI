@@ -518,6 +518,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                 if args.baseline == 'dsmil':
                     logits, cls_loss, patch_num, keep_num, attn, features = model.pure(bag)
                     logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
+                    logits = logits[0]                    
                 else:
                     logits, cls_loss,patch_num,keep_num, attn, features = model.pure(bag)
                 all_uncertainties[slide_id2] = logits.detach().cpu()
@@ -528,6 +529,8 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                     with torch.no_grad():
                         for i in range(n_drop):
                             bal_logits, _, _, _, _, _ = model.pure(bag)
+                            if args.baseline == 'dsmil':
+                                bal_logits = bal_logits[0]
                             probs[i] += F.softmax(bal_logits, dim=1).cpu().data.reshape(-1)
                     all_probs[slide_id2] = probs
 
