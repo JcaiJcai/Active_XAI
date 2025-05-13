@@ -300,6 +300,37 @@ def one_fold(args,fold_k,ckc_metric,dataset):
         
     return [acs,pre,rec,fs,auc,te_auc,te_fs]
 
+def init_centers(X, K):
+    ind = np.argmax([np.linalg.norm(s, 2) for s in X])
+    mu = [X[ind]]
+    indsAll = [ind]
+    centInds = [0.] * len(X)
+    cent = 0
+    print('#Samps\tTotal Distance')
+    while len(mu) < K:
+        if len(mu) == 1:
+            D2 = pairwise_distances(X, mu).ravel().astype(float)
+        else:
+            newD = pairwise_distances(X, [mu[-1]]).ravel().astype(float)
+            for i in range(len(X)):
+                if D2[i] >  newD[i]:
+                    centInds[i] = cent
+                    D2[i] = newD[i]
+        print(str(len(mu)) + '\t' + str(sum(D2)), flush=True)
+        if sum(D2) == 0.0: pdb.set_trace()
+        D2 = D2.ravel().astype(float)
+        Ddist = (D2 ** 2)/ sum(D2 ** 2)
+        customDist = stats.rv_discrete(name='custm', values=(np.arange(len(D2)), Ddist))
+        ind = customDist.rvs(size=1)[0]
+        mu.append(X[ind])
+        indsAll.append(ind)
+        cent += 1
+    gram = np.matmul(X[indsAll], X[indsAll].T)
+    val, _ = np.linalg.eig(gram)
+    val = np.abs(val)
+    vgt = val[val > 1e-2]
+    return indsAll
+
 def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,amp_autocast,criterion,loss_scaler,scheduler,fold_k,mm_sche,epoch, fixed_topk_ids=None, opt_uncertainty=None, opt_features=None):
     # ! opt_uncertainty是用于选topk annotation的
     start = time.time()
@@ -360,7 +391,22 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                     for j in range(m):
                         min_dist[j] = min(min_dist[j], dist_new_ctr[j, 0])
                 topk_ids = all_slide_id[idxs]
-                
+            elif args.strategy == 'badge':
+                all_slide_id = []
+                embDim = list(opt_features.values())[0].shape[-1]
+                embedding = np.zeros([len(opt_uncertainty), embDim * args.n_classes])
+                for i, (slide_id, slide_logits) in enumerate(opt_uncertainty.items()):
+                    features = opt_features[slide_id].reshape(-1)
+                    batchProbs = F.softmax(slide_logits, dim=1).numpy().reshape(-1)
+                    maxInds = np.argmax(batchProbs)
+                    for c in range(args.n_classes):
+                        if c == maxInds:
+                            embedding[i][embDim * c : embDim * (c+1)] = deepcopy(features) * (1 - batchProbs[c])
+                        else:
+                            embedding[i][embDim * c : embDim * (c+1)] = deepcopy(features) * (-1 * batchProbs[c])
+                    all_slide_id.append(slide_id)
+                indices = init_centers(embedding, args.top_k_for_annotation)
+                topk_ids = np.array(all_slide_id)[indices]
             print("Used ncertainties:", opt_uncertainty)
             print("Selected indices:", topk_ids)
         elif epoch>args.start_using_annotation:
@@ -459,7 +505,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                     logits, cls_loss,patch_num,keep_num, attn, features = model.pure(bag)
                 all_uncertainties[slide_id2] = logits.detach().cpu()
                 all_features[slide_id2] = features.detach().cpu()
-
+                
             elif args.model in ('clam_sb','clam_mb','dsmil'):
                 logits,cls_loss,patch_num = model(bag,label,criterion)
                 keep_num = patch_num
