@@ -4,6 +4,7 @@ import wandb
 import numpy as np
 from copy import deepcopy
 import torch.nn as nn
+import torch.nn.functional as F
 # from dataloader import *
 from torch.utils.data import DataLoader, RandomSampler
 import argparse, os
@@ -327,6 +328,17 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                 topk_ids = [slide_id for slide_id, uncertainty in topk_slide_ids]
             elif args.strategy == 'random': # Random assign annotations
                 topk_ids = np.random.choice(list(opt_uncertainty.keys()), size=args.top_k_for_annotation, replace=False)
+            elif args.strategy == 'entorpy':
+                all_entorpy = []
+                all_slide_id = []
+                for slide_id, slide_logits in all_uncertainties.items():
+                    probs = F.softmax(slide_logits, dim=1)
+                    log_probs = torch.log(probs)
+                    entorpy = (probs*log_probs).sum(1)
+                    all_slide_id.append(slide_id)
+                    all_entorpy.append(entorpy)
+                topk_ids = np.array(all_slide_id)[torch.tensor(all_entorpy).sort()[1][:args.top_k_for_annotation]]
+                
             print("Used ncertainties:", opt_uncertainty)
             print("Selected indices:", topk_ids)
         elif epoch>args.start_using_annotation:
@@ -424,7 +436,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                 else:
                     logits, cls_loss,patch_num,keep_num, attn = model.pure(bag)
                 all_uncertainties[slide_id2] = logits.detach().cpu()
-
+                
             elif args.model in ('clam_sb','clam_mb','dsmil'):
                 logits,cls_loss,patch_num = model(bag,label,criterion)
                 keep_num = patch_num
