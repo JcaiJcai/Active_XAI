@@ -279,15 +279,15 @@ class MHIM(nn.Module):
         ps = x.size(1)
 
         if self.baseline == 'dsmil':
-            x,_ = self.online_encoder(x)
+            x, _, attn = self.online_encoder(x, return_attn=True)
         else:
-            x = self.online_encoder(x)
+            x, attn = self.online_encoder(x, return_attn=True)
             x = self.predictor(x)
 
         if self.training:
-            return x, 0, ps,ps
+            return x, 0, ps, ps, attn
         else:
-            return x
+            return x, attn
 
     # 是原来的forward_loss
     def forward_cls_loss(self, student_cls_feat, teacher_cls_feat):
@@ -472,11 +472,11 @@ class MHIM(nn.Module):
             cls_loss= self.forward_cls_loss(student_cls_feat=student_cls_feat,teacher_cls_feat=teacher_cls_feat)
             
             # attn_loss
-            if self.use_attention_loss == True:
+            if self.use_attention_loss:
                 attn_loss = self.forward_attn_loss(student_attn=student_attn, teacher_attn=attn, mask_ids=mask_ids)
             else: attn_loss = 0.
             
-            if self.use_annotation_loss == True:
+            if self.use_annotation_loss:
                 annotation_loss = self.forward_annotation_loss(student_attn=student_attn, annotation=labels_mask, anno_loss_type=anno_loss_type, mask_ids=mask_ids)
             else: annotation_loss = 0.
             

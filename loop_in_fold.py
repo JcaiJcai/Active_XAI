@@ -96,6 +96,14 @@ def one_fold(args,fold_k,ckc_metric,dataset):
         model = clam.CLAM_MB(n_classes=args.n_classes,dropout=args.dropout,act=args.act).to(device)        
     
     # Initialize the student model parameters
+    if args.strategy != 'ours':
+        pre_dict = torch.load(_teacher_init)
+        if 'model' in pre_dict:
+            pre_dict = pre_dict['model'] # Extract actual model parameters
+        info = model.load_state_dict(pre_dict,strict=False) # Initialize the entire model
+        if not args.no_log:
+            print(info)
+            
     if args.init_stu_type != 'none':
         if not args.no_log:
             print('######### Model Initializing.....')
@@ -137,6 +145,9 @@ def one_fold(args,fold_k,ckc_metric,dataset):
         model_tea = None
         opt_evid = None
     
+    # set the teacher to None in the active learning baseline
+    model_tea = None
+
     # *** Loss
     if args.loss == 'bce':
         criterion = nn.BCEWithLogitsLoss()
@@ -302,20 +313,20 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
         
     all_uncertainties = {}
     
-    if args.uncertainty == True:
-        if epoch<args.start_using_annotation: topk_ids=None
+    if args.uncertainty:
+        if epoch<args.start_using_annotation: 
+            topk_ids = None
         elif epoch==args.start_using_annotation:
             print("\n" + "="*30)
             print(f"[START ANNOTATION] Epoch {epoch}: Human annotation begins on selected samples!")
-            if args.uncertainty_random == False:
+            if args.strategy == 'ours':
                 # Choose top-k data according to current_uncertainties for human annotation
                 topk_slide_ids = sorted(opt_uncertainty.items(), key=lambda x: x[1], reverse=True)[:args.top_k_for_annotation]
                 topk_ids = [slide_id for slide_id, uncertainty in topk_slide_ids]
-            else: # Random assign annotations
-                all_slide_ids = list(opt_uncertainty.keys())
-                topk_ids = random.sample(all_slide_ids, k=args.top_k_for_annotation)
-            print(f"Used ncertainties:",opt_uncertainty)
-            print(f"Selected indices:",topk_ids)
+            elif args.strategy == 'random': # Random assign annotations
+                topk_ids = np.random.choice(list(opt_uncertainty.keys()), size=args.top_k_for_annotation, replace=False)
+            print("Used ncertainties:", opt_uncertainty)
+            print("Selected indices:", topk_ids)
         elif epoch>args.start_using_annotation:
             topk_ids=fixed_topk_ids
 
@@ -355,7 +366,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                     # ***** Teacher Model (generate prediction and attention without back propagation) *****
                     # ! attn -> explanation
                     if args.explanation == "attention":
-                        if args.uncertainty == True: # and epoch>0.5*args.num_epoch-1:
+                        if args.uncertainty: # and epoch>0.5*args.num_epoch-1:
                             # Use teacher model to generate prediction and attention
                             alpha, cls_tea, attn = model_tea.forward_teacher_edl(bag)
                             K = alpha.shape[1] # 类别数
@@ -388,7 +399,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                 cls_tea = None if args.cl_alpha == 0. else cls_tea
 
                 # ***** Student Model: Forward *****
-                if args.use_attention_loss == True or args.use_annotation_loss == True:
+                if args.use_attention_loss or args.use_annotation_loss:
                     if args.baseline == 'dsmil':
                         # logits 是 DSMIL 的主类预测 + instance-level 预测。用两个都计算 loss
                         logits, cls_loss, attn_loss, annotation_loss, patch_num, keep_num = model.forward_with_distill_loss(bag,attn,labels_mask,args.anno_loss_type,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
@@ -406,10 +417,12 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                  
             elif args.model == 'pure':
                 if args.baseline == 'dsmil':
-                    logits, cls_loss,patch_num,keep_num = model.pure(bag)
+                    logits, cls_loss, patch_num, keep_num, attn = model.pure(bag)
                     logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                 else:
-                    logits, cls_loss,patch_num,keep_num = model.pure(bag)
+                    logits, cls_loss,patch_num,keep_num, attn = model.pure(bag)
+                all_uncertainties[slide_id2] = logits.item()
+
             elif args.model in ('clam_sb','clam_mb','dsmil'):
                 logits,cls_loss,patch_num = model(bag,label,criterion)
                 keep_num = patch_num
@@ -428,40 +441,44 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
         # ! cls_loss is not used anymore in our code!!!!
         
         # * Annotation_loss & attention_loss. No uncertainty
-        if args.uncertainty == False:
-            if args.use_attention_loss == True or args.use_annotation_loss == True:
+        if not args.uncertainty:
+            if args.use_attention_loss or args.use_annotation_loss:
                 # print("logit_loss",logit_loss)
                 # print("cls_loss",cls_loss)
                 # print("attn_loss",attn_loss)
                 # train_loss = args.cls_alpha * logit_loss +  cls_loss*args.cl_alpha + attn_loss*attn_alpha
-                if args.use_attention_loss == False: args.attn_alpha = 0.
-                if args.annotation_alpha == False: args.annotation_alpha = 0.
+                if not args.use_attention_loss: 
+                    args.attn_alpha = 0.
+                if not args.annotation_alpha: 
+                    args.annotation_alpha = 0.
                 train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha + annotation_loss*args.annotation_alpha
             else:
                 train_loss = args.cls_alpha * logit_loss
         
         # * Use uncertainty to combine annotation_loss & attention_loss
-        elif args.uncertainty == True:
+        elif args.uncertainty:
         
             # In the earlier epochs, we only learned with explanation.
             if epoch<args.start_using_annotation: # In the earlier epochs, we only learned with explanation.
-                train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha
+                train_loss = args.cls_alpha * logit_loss
                 
             # At a predifined epoch, choose top-k data according to current_uncertainties for human annotation.
             elif epoch==args.start_using_annotation:
+                annotation_loss = model.forward_annotation_loss(attn, labels_mask, args.anno_loss_type)
                 if slide_id2 in topk_ids:
                     # print("use annotation_loss",slide_id2)
                     train_loss = args.cls_alpha * logit_loss + annotation_loss * args.annotation_alpha
                 else:
-                    train_loss = args.cls_alpha * logit_loss + attn_loss * args.attn_alpha
+                    train_loss = args.cls_alpha * logit_loss
             
             # After certain epochs, we use fixed_topk_ids
             else: 
+                annotation_loss = model.forward_annotation_loss(attn, labels_mask, args.anno_loss_type)
                 if slide_id2 in fixed_topk_ids:
                     # print("use annotation_loss",slide_id2)
                     train_loss = args.cls_alpha * logit_loss + annotation_loss * args.annotation_alpha
                 else:
-                    train_loss = args.cls_alpha * logit_loss + attn_loss * args.attn_alpha
+                    train_loss = args.cls_alpha * logit_loss
                
 
         train_loss = train_loss / args.accumulation_steps

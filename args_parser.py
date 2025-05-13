@@ -99,10 +99,10 @@ def parse_arguments():
     
     # Active Learning
     parser.add_argument('--explanation', type=str, default="attention", choices=["attention", "shap1", "perturbation"])
-    parser.add_argument('--use_human_mask', type=bool, default=False)
-    parser.add_argument('--use_attention_loss', type=bool, default=False, help='Enable attention-based auxiliary loss')
+    parser.add_argument('--use_human_mask', action='store_true')
+    parser.add_argument('--use_attention_loss', action='store_true', help='Enable attention-based auxiliary loss')
     parser.add_argument('--attn_alpha', default=1., type=float, help='Weight for attention loss')
-    parser.add_argument('--use_annotation_loss', type=bool, default=False)
+    parser.add_argument('--use_annotation_loss', action='store_true')
     parser.add_argument('--annotation_alpha', default=1., type=float, help='Weight for annotation_loss')
     parser.add_argument('--anno_loss_type', default="energy", type=str, choices=["L1", "L2", "energy", "entropy"])
     parser.add_argument('--energy_alphas', default=None, type=list) # 
@@ -111,7 +111,7 @@ def parse_arguments():
     parser.add_argument('--uncertainty', action='store_true', help='Enable uncertainty score calculation')
     parser.add_argument('--top_k_for_annotation', default=50, type=int, help='Number of images to be annotated')
     parser.add_argument('--start_using_annotation', default=40, type=int, help='From which epoch to use annotation')
-    
+    parser.add_argument('--strategy', default='ours', type=str, choices=['ours', 'random'],help='Active learning strategy')
     # Shap
     parser.add_argument('--search_num', default=None, type=int, help='Number of patches to calculate shap values')
   
