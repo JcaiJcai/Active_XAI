@@ -198,14 +198,16 @@ def one_fold(args,fold_k,ckc_metric,dataset):
         # stop: whether early stopping was triggered; threshold_optimal: the optimal classification threshold (for binary classification)
         stop,accuracy, auc_value, precision, recall, fscore, test_loss, threshold_optimal = val_loop(args,model,val_loader,device,criterion,early_stopping,epoch,model_tea)
         
-        # ****** EVALUATE (Teacher) ******
-        if model_tea is not None: # If a teacher model exists
-            # Perform a validation run on the teacher model
-            _,accuracy_tea, auc_value_tea, precision_tea, recall_tea, fscore_tea, test_loss_tea,_ = val_loop(args,model_tea,val_loader,device,criterion,None,epoch,model_tea)
+        # # ****** EVALUATE (Teacher) ******
+        # if model_tea is not None: # If a teacher model exists
+        #     # Perform a validation run on the teacher model
+                        
+
+        #     _,accuracy_tea, auc_value_tea, precision_tea, recall_tea, fscore_tea, test_loss_tea,_ = val_loop(args,model_tea,val_loader,device,criterion,None,epoch,model_tea)
             
-            if auc_value_tea > opt_tea_auc: # If the current teacher model's AUC is better than the previous best, update it
-                opt_tea_auc = auc_value_tea
-                opt_uncertainty = copy.deepcopy(uncertainty) # !opt_uncertainty: The uncertainty of the current optimal model. Once fixed_topk_ids is fixed, data will no longer be selected based on it
+        if auc_value > opt_tea_auc: # If the current teacher model's AUC is better than the previous best, update it
+            opt_tea_auc = auc_value
+            opt_uncertainty = copy.deepcopy(uncertainty) # !opt_uncertainty: The uncertainty of the current optimal model. Once fixed_topk_ids is fixed, data will no longer be selected based on it
 
         # ********* TEST (Student) *********
         if args.always_test:
@@ -421,7 +423,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                     logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                 else:
                     logits, cls_loss,patch_num,keep_num, attn = model.pure(bag)
-                all_uncertainties[slide_id2] = logits.item()
+                all_uncertainties[slide_id2] = logits.detach().cpu()
 
             elif args.model in ('clam_sb','clam_mb','dsmil'):
                 logits,cls_loss,patch_num = model(bag,label,criterion)
@@ -464,19 +466,23 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                 
             # At a predifined epoch, choose top-k data according to current_uncertainties for human annotation.
             elif epoch==args.start_using_annotation:
-                annotation_loss = model.forward_annotation_loss(attn, labels_mask, args.anno_loss_type)
                 if slide_id2 in topk_ids:
                     # print("use annotation_loss",slide_id2)
+                    annotation_loss = model.forward_annotation_loss(attn, labels_mask, args.anno_loss_type)
                     train_loss = args.cls_alpha * logit_loss + annotation_loss * args.annotation_alpha
+                    print(f"Logits: {logit_loss}, Annotation: {annotation_loss}, Both: {train_loss}")
+
                 else:
                     train_loss = args.cls_alpha * logit_loss
             
             # After certain epochs, we use fixed_topk_ids
             else: 
-                annotation_loss = model.forward_annotation_loss(attn, labels_mask, args.anno_loss_type)
                 if slide_id2 in fixed_topk_ids:
                     # print("use annotation_loss",slide_id2)
+                    annotation_loss = model.forward_annotation_loss(attn, labels_mask, args.anno_loss_type)
+
                     train_loss = args.cls_alpha * logit_loss + annotation_loss * args.annotation_alpha
+                    print(f"Logits: {logit_loss}, Annotation: {annotation_loss}, Both: {train_loss}")
                 else:
                     train_loss = args.cls_alpha * logit_loss
                

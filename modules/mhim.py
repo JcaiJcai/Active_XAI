@@ -339,7 +339,7 @@ class MHIM(nn.Module):
             attn_norm = student_attn / attn_sum
             
             annot_norm = annotation.float() / 2.0
-            l2_loss = torch.nn.L2Loss(reduction='mean')
+            l2_loss = torch.nn.MSELoss()
             
             annotation_loss = l2_loss(attn_norm, annot_norm)
         elif anno_loss_type == "entropy":
