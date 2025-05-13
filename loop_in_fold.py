@@ -27,6 +27,9 @@ from uncertainty import *
 from modules import attmil,clam,mhim,dsmil,transmil,mean_max
 from explanation import shapley
 
+from sklearn.metrics import pairwise_distances
+
+
 def seed_torch(seed=2021):
     import random
     random.seed(seed)
@@ -185,11 +188,11 @@ def one_fold(args,fold_k,ckc_metric,dataset):
     train_time_meter = AverageMeter() # Timer
     fixed_topk_ids = None
     opt_uncertainty = None
-    
+    opt_features = None
     for epoch in range(epoch_start, args.num_epoch):
         # ****** TRAIN (Teacher and Student)******
         # uncertainty: 当前模型计算出来的uncertainty
-        train_loss, start, end, fixed_topk_ids, uncertainty = train_loop(args,model,model_tea,train_loader,optimizer,opt_evid, device,amp_autocast,criterion,loss_scaler,scheduler,fold_k,mm_sche,epoch, fixed_topk_ids, opt_uncertainty)
+        train_loss, start, end, fixed_topk_ids, uncertainty, features = train_loop(args,model,model_tea,train_loader,optimizer,opt_evid, device,amp_autocast,criterion,loss_scaler,scheduler,fold_k,mm_sche,epoch, fixed_topk_ids, opt_uncertainty, opt_features)
         train_time_meter.update(end-start) # Training time
         
         if epoch % 20 == 0:
@@ -209,7 +212,7 @@ def one_fold(args,fold_k,ckc_metric,dataset):
         if auc_value > opt_tea_auc: # If the current teacher model's AUC is better than the previous best, update it
             opt_tea_auc = auc_value
             opt_uncertainty = copy.deepcopy(uncertainty) # !opt_uncertainty: The uncertainty of the current optimal model. Once fixed_topk_ids is fixed, data will no longer be selected based on it
-
+            opt_features = copy.deepcopy(features)
         # ********* TEST (Student) *********
         if args.always_test:
             # Test student model
@@ -281,7 +284,7 @@ def one_fold(args,fold_k,ckc_metric,dataset):
         info = model_tea.load_state_dict(best_std['teacher'])
         print(info)
     
-    accuracy, auc_value, precision, recall, fscore,test_loss_log = test(args,model,test_loader,device,criterion,model_tea,opt_thr)
+    accuracy, auc_value, precision, recall, fscore, test_loss_log = test(args,model,test_loader,device,criterion,model_tea,opt_thr)
     
     print('\n Optimal accuracy: %.3f ,Optimal auc: %.3f,Optimal precision: %.3f,Optimal recall: %.3f,Optimal fscore: %.3f' % (optimal_ac,opt_auc,opt_pre,opt_re,opt_fs))
     
@@ -297,7 +300,7 @@ def one_fold(args,fold_k,ckc_metric,dataset):
         
     return [acs,pre,rec,fs,auc,te_auc,te_fs]
 
-def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,amp_autocast,criterion,loss_scaler,scheduler,fold_k,mm_sche,epoch, fixed_topk_ids=None, opt_uncertainty=None):
+def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,amp_autocast,criterion,loss_scaler,scheduler,fold_k,mm_sche,epoch, fixed_topk_ids=None, opt_uncertainty=None, opt_features=None):
     # ! opt_uncertainty是用于选topk annotation的
     start = time.time()
 
@@ -315,7 +318,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
         model_tea.train()
         
     all_uncertainties = {}
-    
+    all_features = {}
     if args.uncertainty:
         if epoch<args.start_using_annotation: 
             topk_ids = None
@@ -328,16 +331,35 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                 topk_ids = [slide_id for slide_id, uncertainty in topk_slide_ids]
             elif args.strategy == 'random': # Random assign annotations
                 topk_ids = np.random.choice(list(opt_uncertainty.keys()), size=args.top_k_for_annotation, replace=False)
-            elif args.strategy == 'entorpy':
-                all_entorpy = []
+            elif args.strategy == 'entropy':
                 all_slide_id = []
-                for slide_id, slide_logits in all_uncertainties.items():
+                all_entorpy = []
+                for slide_id, slide_logits in opt_uncertainty.items():
                     probs = F.softmax(slide_logits, dim=1)
                     log_probs = torch.log(probs)
                     entorpy = (probs*log_probs).sum(1)
                     all_slide_id.append(slide_id)
                     all_entorpy.append(entorpy)
                 topk_ids = np.array(all_slide_id)[torch.tensor(all_entorpy).sort()[1][:args.top_k_for_annotation]]
+            elif args.strategy == 'coreset':
+                all_slide_id = []
+                all_features_list = []
+                for slide_id, feature in opt_features.items():
+                    all_features_list.append(feature.numpy())
+                    all_slide_id.append(slide_id)
+                all_features_list = np.concatenate(all_features_list)
+                all_slide_id = np.array(all_slide_id)
+                
+                m = np.shape(all_features_list)[0]
+                min_dist = np.tile(float("inf"), m)
+                idxs = []
+                for i in range(args.top_k_for_annotation):
+                    idx = min_dist.argmax()
+                    idxs.append(idx)
+                    dist_new_ctr = pairwise_distances(all_features_list, all_features_list[[idx], :])
+                    for j in range(m):
+                        min_dist[j] = min(min_dist[j], dist_new_ctr[j, 0])
+                topk_ids = all_slide_id[idxs]
                 
             print("Used ncertainties:", opt_uncertainty)
             print("Selected indices:", topk_ids)
@@ -431,12 +453,13 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                  
             elif args.model == 'pure':
                 if args.baseline == 'dsmil':
-                    logits, cls_loss, patch_num, keep_num, attn = model.pure(bag)
+                    logits, cls_loss, patch_num, keep_num, attn, features = model.pure(bag)
                     logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                 else:
-                    logits, cls_loss,patch_num,keep_num, attn = model.pure(bag)
+                    logits, cls_loss,patch_num,keep_num, attn, features = model.pure(bag)
                 all_uncertainties[slide_id2] = logits.detach().cpu()
-                
+                all_features[slide_id2] = features.detach().cpu()
+
             elif args.model in ('clam_sb','clam_mb','dsmil'):
                 logits,cls_loss,patch_num = model(bag,label,criterion)
                 keep_num = patch_num
@@ -569,7 +592,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
         scheduler.step()
     
     # !返回的all_uncertainties是逐时更新的，我们不用这个来选topk_ids，因为直接用fixed_topk_ids
-    return train_loss_log,start,end, topk_ids, all_uncertainties
+    return train_loss_log,start,end, topk_ids, all_uncertainties, all_features
 
 def val_loop(args,model,loader,device,criterion,early_stopping,epoch,model_tea=None):
     if model_tea is not None:

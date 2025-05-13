@@ -282,12 +282,12 @@ class MHIM(nn.Module):
             x, _, attn = self.online_encoder(x, return_attn=True)
         else:
             x, attn = self.online_encoder(x, return_attn=True)
-            x = self.predictor(x)
+            logits = self.predictor(x)
 
         if self.training:
-            return x, 0, ps, ps, attn
+            return logits, 0, ps, ps, attn, x
         else:
-            return x, attn
+            return logits, attn, x
 
     # 是原来的forward_loss
     def forward_cls_loss(self, student_cls_feat, teacher_cls_feat):
