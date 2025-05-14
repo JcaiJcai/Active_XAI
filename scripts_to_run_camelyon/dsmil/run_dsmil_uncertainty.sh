@@ -1,7 +1,7 @@
 # 只使用attnloss，不用human_annotation mask
 #  train_loss = args.cls_alpha * logit_loss + attn_loss*args.attn_alpha
 #!/bin/bash
-for top_k_for_annotation in 20 40; do
+for top_k_for_annotation in 20 30 40; do
     for seed in 2021; do
         annotation_alpha=0.01
         attn_alpha=0.01

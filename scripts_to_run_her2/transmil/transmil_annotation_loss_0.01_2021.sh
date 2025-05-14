@@ -16,5 +16,5 @@
 source activate clam_latest
 cd /u/jcai1/code/usefulxai/code/my_method
 
-python3 main.py --project=transmil_annotation_loss_0.01_2021 --h5_folder_name=h5_files_labels --model_path=/u/jcai1/code/usefulxai/paper_results_her2/trained_models --k_fold=3 --teacher_init=/u/jcai1/code/usefulxai/paper_results_her2/pure_model/transmil_0511_0252 --cl_alpha=0.1 --mm_sche --init_stu_type=fc --seed=2021 --use_annotation_loss=True --annotation_alpha=0.01 --anno_loss_type=energy --lr=1e-5 --head=4
+python3 main.py --project=transmil_annotation_loss_0.01_2021 --dataset=her2 --h5_folder_name=h5_files_labels --model_path=/u/jcai1/code/usefulxai/paper_results_her2/trained_models --k_fold=3 --teacher_init=/u/jcai1/code/usefulxai/paper_results_her2/pure_model/transmil_0511_0252 --cl_alpha=0.1 --mm_sche --init_stu_type=fc --seed=2021 --use_annotation_loss=True --annotation_alpha=0.01 --anno_loss_type=energy --lr=1e-5 --n_heads=4
 

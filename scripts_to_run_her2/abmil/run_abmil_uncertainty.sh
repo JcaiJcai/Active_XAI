@@ -31,6 +31,7 @@ python3 main.py --project=${project_name} \
 --h5_folder_name=h5_files_labels \
 --model_path=/u/jcai1/code/usefulxai/paper_results_her2/trained_models \
 --k_fold=3 \
+--dataset=her2 \
 --teacher_init=/u/jcai1/code/usefulxai/paper_results_her2/pure_model/abmil_0511_0636 \
 --cl_alpha=0.1 \
 --mm_sche \
@@ -41,7 +42,7 @@ python3 main.py --project=${project_name} \
 --attn_alpha=${attn_alpha} \
 --annotation_alpha=${annotation_alpha} \
 --top_k_for_annotation=${top_k_for_annotation} \
---uncertainty=True \
+--uncertainty \
 --start_using_annotation=40 \
 --lr=1e-4 \
 --baseline=attn

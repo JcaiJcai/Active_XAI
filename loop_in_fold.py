@@ -382,7 +382,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                         if "transmil" in args.teacher_init: model_name = "transmil"
                         elif "dsmil" in args.teacher_init: model_name = "dsmil"
                         elif "abmil" in args.teacher_init: model_name = "abmil"
-                        pt_path = "/u/jcai1/code/usefulxai/code/results/explanations/"+model_name+"_fold_"+str(fold_k)+"_shap1_2000/"+slide_id2+".pt"
+                        pt_path = "/u/jcai1/code/usefulxai/paper_results/explanations/"+model_name+"_fold_"+str(fold_k)+"_shap1_2000/"+slide_id2+".pt"
                         # print(pt_path)
                         shap_score = torch.load(pt_path, map_location='cpu', weights_only=False)
                         shap_score = list(shap_score.values())[0]
