@@ -180,9 +180,10 @@ def one_fold(args,fold_k,ckc_metric,dataset):
         train_loss, start, end, fixed_topk_ids, uncertainty = train_loop(args,model,model_tea,train_loader,optimizer,opt_evid, device,amp_autocast,criterion,loss_scaler,scheduler,fold_k,mm_sche,epoch, fixed_topk_ids, opt_uncertainty)
         train_time_meter.update(end-start) # Training time
         
-        if epoch % 20 == 0:
-            print(f"[Epoch {epoch}] fixed_topk_ids:", fixed_topk_ids)
-            print(f"[Epoch {epoch}] uncertainty:", uncertainty) # fixed_topk_ids和uncertainty在固定epoch之后应该保持不变
+        if args.uncertainty == True:
+            if epoch % 10 == 0:
+                print(f"[Epoch {epoch}] fixed_topk_ids:", fixed_topk_ids)
+                print(f"[Epoch {epoch}] uncertainty:", uncertainty) # fixed_topk_ids和uncertainty在固定epoch之后应该保持不变
         # ****** EVALUATE (Student) ******
         # stop: whether early stopping was triggered; threshold_optimal: the optimal classification threshold (for binary classification)
         stop,accuracy, auc_value, precision, recall, fscore, test_loss, threshold_optimal = val_loop(args,model,val_loader,device,criterion,early_stopping,epoch,model_tea)
@@ -318,6 +319,8 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
             print(f"Selected indices:",topk_ids)
         elif epoch>args.start_using_annotation:
             topk_ids=fixed_topk_ids
+    else:
+        topk_ids=None
 
     for i, data in enumerate(loader): # i - batch index
         # data[0]: features(36710, 1024)
@@ -358,8 +361,10 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                         if args.uncertainty == True: # and epoch>0.5*args.num_epoch-1:
                             # Use teacher model to generate prediction and attention
                             alpha, cls_tea, attn = model_tea.forward_teacher_edl(bag)
+                            # print("alpha",alpha) # alpha tensor([[1., 1.]], device='cuda:0', grad_fn=<AddBackward0>)
                             K = alpha.shape[1] # 类别数
                             S = torch.sum(alpha, dim=1, keepdim=True)  # 每个样本的总证据强度 S_i
+                            # print("K,S", K, S) # 2 tensor([[4.7763]], device='cuda:0', grad_fn=<SumBackward1>)
                             uncertainty = K / (S + 1e-8) # [B, 1] # uncertainty 越大，模型越不确定
                             # print(slide_id2,uncertainty.item())
                             all_uncertainties[slide_id2] = uncertainty.item()
@@ -374,7 +379,10 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                         # attn_index = np.argsort(-attn_avg_lastlayer.detach().cpu().numpy())
                         # score = shapley.shapley_value(attn_index, bag, label, model_tea, device, args.baseline, subset_num=10).to(attn[0].device) # (len(search_indices), )
                         # attn = [score.unsqueeze(0).unsqueeze(0).expand(1, 8, -1) for _ in range(2)] # （1，8, 16124）
-                        pt_path = "/u/jcai1/code/usefulxai/code/results/explanations/transmil_fold_"+str(fold_k)+"_shap1_2000/"+slide_id2+".pt"
+                        if "transmil" in args.teacher_init: model_name = "transmil"
+                        elif "dsmil" in args.teacher_init: model_name = "dsmil"
+                        elif "abmil" in args.teacher_init: model_name = "abmil"
+                        pt_path = "/u/jcai1/code/usefulxai/code/results/explanations/"+model_name+"_fold_"+str(fold_k)+"_shap1_2000/"+slide_id2+".pt"
                         # print(pt_path)
                         shap_score = torch.load(pt_path, map_location='cpu', weights_only=False)
                         shap_score = list(shap_score.values())[0]

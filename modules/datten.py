@@ -164,6 +164,8 @@ class BClassifier(nn.Module):
         C = self.fcc(B) # 1 x C x 1
         C = C.view(1, -1)
         return C, A, B 
+    
+    
 class DSMIL(nn.Module):
     def __init__(self,n_classes=2,mask_ratio=0.,mlp_dim=512,cls_attn=True,attn_index='max'):
         super(DSMIL, self).__init__()
@@ -228,7 +230,6 @@ class DSMIL(nn.Module):
         return x_masked, mask, ids_restore
     
     def forward(self, x, mask_ids=None, len_keep=None, return_attn=False,no_norm=False,mask_enable=False,**kwargs):
-  
         if mask_enable and (self.mask_ratio > 0. or mask_ids is not None):
             x, _,_ = self.random_masking(x,self.mask_ratio,mask_ids,len_keep)
 

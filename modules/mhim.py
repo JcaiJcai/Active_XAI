@@ -245,9 +245,11 @@ class MHIM(nn.Module):
 
             if self.baseline == 'dsmil': # 如果是 DSMIL 模型，encoder 输出三个值，取其中两个
                 _,x,attn = self.online_encoder(x,return_attn=True)
+                x = x[:, 0, :]
             else: # 返回编码后的 bag-level 表示 x 和 attention 分数 attn
                 x,attn = self.online_encoder(x,return_attn=True)
 
+        # print("x.shape", x.shape) # torch.Size([1, 512])
         evidence = F.relu(self.evidence_head(x))
         alpha = evidence + 1.0
         return alpha, x, attn
@@ -301,23 +303,25 @@ class MHIM(nn.Module):
     
     def forward_attn_loss(self, student_attn, teacher_attn, mask_ids):
         # print("student_attn.shape",student_attn[0].shape, student_attn) # student_attn有两层，每层的的 shape 是 [1, 8, 16124]。
-        N, L, D = student_attn[0].shape # [batch, head, tokens] e.g.[1, 8, 16124]
-        keep_mask = torch.ones(N, D).to(student_attn[0].device)
-        if mask_ids is not None:
-            keep_mask.scatter_(dim=1, index=mask_ids, value=0)
-            keep_mask = keep_mask.unsqueeze(1)  # 加一个维度[N, 1, D]
-            keep_mask = keep_mask.expand(-1, L, -1)  # 复制 L 次变成[N, L, D]
-        
-        distill_loss = 0.
-
-        for i in range(len(student_attn)):
-            if teacher_attn is not None:
-                # print(teacher_attn[i].shape, student_attn[i].shape, keep_mask.shape)
-                # print(teacher_attn[i].device, keep_mask.device)
-                teacher_masked = teacher_attn[i] * keep_mask
-                student_masked = student_attn[i] * keep_mask
-                distill_loss += - (teacher_masked.softmax(dim=-1) * torch.log_softmax(student_masked, dim=-1)).sum(dim=-1).mean()
-                # distill_loss += - (teacher_attn[i].softmax(dim=-1) * torch.log_softmax(student_attn[i], dim=-1)).sum(dim=-1).mean()
+        if self.baseline == "selfattn": # Transmil or Abmil
+            N, L, D = student_attn[0].shape # [batch, head, tokens] e.g.[1, 8, 16124]
+            keep_mask = torch.ones(N, D).to(student_attn[0].device)
+            if mask_ids is not None:
+                keep_mask.scatter_(dim=1, index=mask_ids, value=0)
+                keep_mask = keep_mask.unsqueeze(1)  # 加一个维度[N, 1, D]
+                keep_mask = keep_mask.expand(-1, L, -1)  # 复制 L 次变成[N, L, D]
+            distill_loss = 0.
+            for i in range(len(student_attn)):
+                if teacher_attn is not None:
+                    # print(teacher_attn[i].shape, student_attn[i].shape, keep_mask.shape)
+                    # print(teacher_attn[i].device, keep_mask.device)
+                    teacher_masked = teacher_attn[i] * keep_mask
+                    student_masked = student_attn[i] * keep_mask
+                    # [Important] The shape of teacher_masked is [1, 8, 5587]
+                    distill_loss += - (teacher_masked.softmax(dim=-1) * torch.log_softmax(student_masked, dim=-1)).sum(dim=-1).mean()
+        elif self.baseline == "dsmil" or self.baseline == "attn":
+            # print(student_attn.shape, teacher_attn.shape) # [1, 92924], [1, 92924]
+            distill_loss = - (student_attn.softmax(dim=-1) * torch.log_softmax(teacher_attn, dim=-1)).sum(dim=-1).mean()
         return distill_loss
     
     def forward_annotation_loss(self, student_attn, annotation, anno_loss_type, mask_ids=None, energy_alphas=(-1.0, 0.0, 1.0)):
@@ -354,11 +358,20 @@ class MHIM(nn.Module):
             bce_loss = torch.nn.BCELoss(reduction='mean')
             annotation_loss = bce_loss(attn_norm, annot_norm)
         elif anno_loss_type == "energy":
-            # annotation 中存的是 0/1/2 三类
+            # annotation: label0, label1, label2
+            # print("student_attn",student_attn.shape)
             B, *rest = annotation.shape
-            # flatten 到 [B, N]
-            student_attn = student_attn[1] # 取最后一层的attention
-            student_flat = student_attn.view(B, -1)
+            if self.baseline == "selfattn": # transmil or abmil
+                student_attn = student_attn[1] # 取最后一层的attention
+                student_flat = student_attn.view(B, -1)
+            elif self.baseline == "dsmil" or self.baseline == "attn":
+                # print("student_attn",student_attn.shape) # torch.Size([1, 48354])
+                student_flat = student_attn.view(B, -1)
+                # print("student_attn2",student_attn.shape) # torch.Size([1, 48354])
+            
+            # [Important] The shape of student_flat should be [num_of_data, num_of_head]
+            # e.g. [47345, 8] for transmil and [47345, 1] for dsmil
+            # print("student_flat", student_flat.shape)
             annot_flat   = annotation.view(B, -1)
             sum_attn = student_flat.sum(dim=1, keepdim=True) + 1e-6  # [B,1]
 
@@ -446,7 +459,6 @@ class MHIM(nn.Module):
         # print("mask_ids",mask_ids.shape, mask_ids) # torch.Size([1, 40233])
         # 把attn也mask一下
         
-        
         if self.baseline == 'dsmil':
             # forward online network
             student_logit,student_cls_feat, student_attn= self.online_encoder(x,len_keep=len_keep,mask_ids=mask_ids,mask_enable=True,return_attn=True)
@@ -455,12 +467,15 @@ class MHIM(nn.Module):
             cls_loss = self.forward_cls_loss(student_cls_feat=student_cls_feat,teacher_cls_feat=teacher_cls_feat)
             
             # attn_loss
-            attn_loss = self.forward_attn_loss(student_attn=student_attn, teacher_attn=attn, mask_ids=mask_ids)
+            if self.use_attention_loss == True:
+                attn_loss = self.forward_attn_loss(student_attn=student_attn, teacher_attn=attn, mask_ids=mask_ids)
+            else: attn_loss = 0.
             
             if self.use_annotation_loss == True:
                 annotation_loss = self.forward_annotation_loss(student_attn=student_attn, annotation=labels_mask, anno_loss_type=anno_loss_type, mask_ids=mask_ids)
+            else: annotation_loss = 0.
 
-            return student_logit, cls_loss, attn_loss, ps, len_keep
+            return student_logit, cls_loss, attn_loss, annotation_loss, ps, len_keep
         else:
             # forward online network
             student_cls_feat, student_attn = self.online_encoder(x,len_keep=len_keep,mask_ids=mask_ids,mask_enable=True,return_attn=True)
