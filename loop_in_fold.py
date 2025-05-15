@@ -196,7 +196,8 @@ def one_fold(args,fold_k,ckc_metric,dataset):
             if auc_value_tea > opt_tea_auc: # If the current teacher model's AUC is better than the previous best, update it
                 opt_tea_auc = auc_value_tea
                 opt_uncertainty = copy.deepcopy(uncertainty) # !opt_uncertainty: The uncertainty of the current optimal model. Once fixed_topk_ids is fixed, data will no longer be selected based on it
-
+            if opt_uncertainty == None:
+                opt_uncertainty = copy.deepcopy(uncertainty)
         # ********* TEST (Student) *********
         if args.always_test:
             # Test student model
@@ -379,6 +380,15 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                         # attn_index = np.argsort(-attn_avg_lastlayer.detach().cpu().numpy())
                         # score = shapley.shapley_value(attn_index, bag, label, model_tea, device, args.baseline, subset_num=10).to(attn[0].device) # (len(search_indices), )
                         # attn = [score.unsqueeze(0).unsqueeze(0).expand(1, 8, -1) for _ in range(2)] # （1，8, 16124）
+                        if args.uncertainty == True:
+                            alpha, cls_tea, _ = model_tea.forward_teacher_edl(bag)
+                            K = alpha.shape[1]
+                            S = torch.sum(alpha, dim=1, keepdim=True)
+                            uncertainty = K / (S + 1e-8)
+                            all_uncertainties[slide_id2] = uncertainty.item()
+                        else:
+                            cls_tea, _ = model_tea.forward_teacher(bag)
+                        
                         if "transmil" in args.teacher_init: model_name = "transmil"
                         elif "dsmil" in args.teacher_init: model_name = "dsmil"
                         elif "abmil" in args.teacher_init: model_name = "abmil"
@@ -389,7 +399,6 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                         shap_score = torch.tensor(shap_score, device=device)
                         shap_attn = shap_score.unsqueeze(0).unsqueeze(0).expand(1, 8, -1)
                         attn = [shap_attn.clone() for _ in range(2)]
-                        cls_tea, _ = model_tea.forward_teacher(bag)
                 else:
                     attn,cls_tea = None, None
                     

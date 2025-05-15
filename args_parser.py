@@ -24,6 +24,8 @@ def parse_arguments():
     # parser.add_argument('--task', type=str, choices=['task_1_tumor_vs_normal',  'task_2_tumor_subtyping']) # Jie
     parser.add_argument('--label_frac', type=float, default=1.0, # Jie
                     help='fraction of training labels (default: 1.0)')
+    parser.add_argument('--device', type=str, default='cuda:0', help='Device to use: e.g., "cuda:0" or "cpu"')
+
     
     # Train
     parser.add_argument('--cls_alpha', default=1.0, type=float, help='Main loss alpha')
