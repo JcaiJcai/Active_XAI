@@ -32,34 +32,13 @@ class SubsetSequentialSampler(Sampler):
 	def __len__(self):
 		return len(self.indices)
 
-# def collate_MIL(batch):
-# 	# print("~~~~~~~~1111")
-# 	# for i in batch[0]:
-# 	# 	if hasattr(i, "shape"):
-# 	# 		print(i.shape, i)
-# 	# 	else:
-# 	# 		print(i)
-# 	# print("~~~~~~~~2222")
-# 	img = torch.cat([item[0] for item in batch], dim = 0)
-# 	label = torch.LongTensor([item[1] for item in batch])
-# 	return [img, label]
 
-def collate_MIL(batch): # Jie
-	# print("~~~~~~~~1111")
-	# for i in batch[0]:
-	# 	if hasattr(i, "shape"):
-	# 		print(i.shape) # ([7974, 1024])；(7974, 2)；(7974,)
-	# 	else:
-	# 		print(i) 
+def collate_MIL(batch):
 	img = torch.cat([item[0] for item in batch], dim = 0)
 	label = torch.LongTensor([item[1] for item in batch])
 	coords = torch.tensor(np.vstack([item[2] for item in batch]), dtype=torch.long)
 	labels_mask = torch.tensor(np.vstack([item[3] for item in batch]).squeeze(), dtype=torch.long)
 	slide_id2 = [item[4] for item in batch] 
-	# print("~~~~~~~~2222")
-	# # ([36710, 1024]) ([1]) (36710, 2) (36710,)
-	# print(img.shape, label.shape, coords.shape, labels_mask.shape)
-	# print("~~~~~~~~3333")
 	return [img, label, coords, labels_mask, slide_id2]
 
 
@@ -75,10 +54,10 @@ def get_simple_loader(dataset, batch_size=1, num_workers=1):
 	return loader 
 
 def get_split_loader(split_dataset, batch_size, training = False, testing = False, weighted = False):
-    # split_dataset: 子集数据（通常是 train/val/test 中的一部分）
-	# training: 是否用于训练（控制是否使用乱序、是否带权重采样）
-	# testing: 是否是测试阶段（如果是，将只采样 10% 作为快速测试）
-	# weighted: 是否使用类别平衡采样器（仅在 training=True 时有效）
+    # split_dataset: （ train/val/test ）
+	# training: （、）
+	# testing: （， 10% ）
+	# weighted: （ training=True ）
 
 	"""
 		return either the validation loader or training loader 
@@ -86,7 +65,7 @@ def get_split_loader(split_dataset, batch_size, training = False, testing = Fals
 	kwargs = {'num_workers': 4} if device.type == "cuda" else {}
 	if not testing:
 		if training:
-			if weighted: # 每个样本赋予一个权重，控制类别平衡采样（适用于不平衡类别问题）
+			if weighted: # ，（）
 				weights = make_weights_for_balanced_classes_split(split_dataset)
 				loader = DataLoader(split_dataset, batch_size=batch_size, sampler = WeightedRandomSampler(weights, len(weights)), collate_fn = collate_MIL, **kwargs)	
 			else:
@@ -123,8 +102,8 @@ def print_network(net):
 	print('Total number of parameters: %d' % num_params)
 	print('Total number of trainable parameters: %d' % num_params_train)
 
-# 在 slide 或病人级别的数据上，根据类别 cls_ids，将样本划分为训练集、验证集、测试集，并可多次生成 K 折交叉验证的划分结果。
-# 使用：
+#  slide ， cls_ids，、、， K 。
+# ：
 # train_ids, val_ids, test_ids = next(split_gen)
 # for train_ids, val_ids, test_ids in generate_split(...):
 def generate_split(cls_ids, val_num, test_num, samples, n_splits = 5, seed = 7, label_frac = 1.0, custom_test_ids = None):

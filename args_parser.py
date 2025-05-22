@@ -8,14 +8,14 @@ def parse_arguments():
     
     # Dataset 
     parser.add_argument('--datasets', default='camelyon16', type=str, help='[camelyon16, her2]')
-    parser.add_argument('--h5_folder_name', type=str, default='h5_files_labels', choices=['h5_files', 'h5_files_annotations', 'h5_files_labels','None']) # h5_files_annotations: 根据annotation过滤后的数据集h5_files_annotations，对于tumor数据，只保留注释区域，对于normal数据则不变；h5_files_labels: 根据annotation为每个坐标赋予标签（0，1，2）
+    parser.add_argument('--h5_folder_name', type=str, default='h5_files_labels', choices=['h5_files', 'h5_files_annotations', 'h5_files_labels','None']) # h5_files_annotations: annotationh5_files_annotations，tumor，，normal；h5_files_labels: annotation（0，1，2）
     parser.add_argument('--fix_loader_random', action='store_true', help='Fix random seed of dataloader')
     parser.add_argument('--fix_train_random', action='store_true', help='Fix random seed of Training')
     parser.add_argument('--val_ratio', default=0., type=float, help='Val-set ratio')
     parser.add_argument('--fold_start', default=0, type=int, help='Start validation fold [0]')
     parser.add_argument('--persistence', action='store_true', help='Load data into memory') 
-    parser.add_argument('--same_psize', default=0, type=int, help='Keep the same size of all patches [0]') # 是否强制让所有 patch 保持相同的尺寸
-    parser.add_argument('--k_fold', type=int, default=10, help='number of folds (default: 10)') # 交叉验证（cross-validation）要分几折（fold），默认是 3/10 折
+    parser.add_argument('--same_psize', default=0, type=int, help='Keep the same size of all patches [0]') #  patch 
+    parser.add_argument('--k_fold', type=int, default=10, help='number of folds (default: 10)') # （cross-validation）（fold）， 3/10 
     parser.add_argument('--k_start', type=int, default=-1, help='start fold (default: -1, last fold)')
     parser.add_argument('--k_end', type=int, default=-1, help='end fold (default: -1, first fold)') # 
     parser.add_argument('--split_dir', type=str, default=None, # 
@@ -39,7 +39,7 @@ def parse_arguments():
     parser.add_argument('--opt', default='adam', type=str, help='Optimizer [adam, adamw]')
     parser.add_argument('--save_best_model_stage', default=0., type=float, help='See DTFD')
     parser.add_argument('--seed', default=2021, type=int, help='random number [2021]' )
-    parser.add_argument('--always_test', action='store_true', help='Test model in the training phase') # train的时候每轮都要test
+    parser.add_argument('--always_test', action='store_true', help='Test model in the training phase') # traintest
     parser.add_argument('--best_thr_val', action='store_true', help='Cal the best thr with val set in the test phase.')
     parser.add_argument('--testing', action='store_true', default=False, help='debugging tool') # 
     parser.add_argument('--weighted_sample', action='store_true', default=False, help='enable weighted sampling') 
@@ -74,20 +74,20 @@ def parse_arguments():
     # parser.add_argument('--mask_ratio_l', default=0., type=float, help='Low attention mask ratio')
     # parser.add_argument('--mask_ratio_h', default=0., type=float, help='High attention mask ratio')
     # parser.add_argument('--mask_ratio_hr', default=1., type=float, help='Randomly high attention mask ratio')
-    # parser.add_argument('--mrh_sche', action='store_true', help='Decay of HAM') # 是否动态调整 mask_ratio_h
+    # parser.add_argument('--mrh_sche', action='store_true', help='Decay of HAM') #  mask_ratio_h
     # parser.add_argument('--msa_fusion', default='vote', type=str, help='[mean,vote]')
-    # parser.add_argument('--attn_layer', default=0, type=int) # 根据第几层的attn做mask，默认为0
+    # parser.add_argument('--attn_layer', default=0, type=int) # attnmask，0
     
     # Siamese framework
     parser.add_argument('--cl_alpha', default=0., type=float, help='Auxiliary loss alpha')
     parser.add_argument('--temp_t', default=0.1, type=float, help='Temperature')
     parser.add_argument('--teacher_init', default='none', type=str, help='Path to initial teacher model')
-    parser.add_argument('--no_tea_init', action='store_true', help='Without teacher initialization') # 默认值为 False，表示默认会初始化 teacher 模型。如果你加上 --no_tea_init，就会跳过 teacher 加载 checkpoint 的步骤
-    parser.add_argument('--init_stu_type', default='none', type=str, help='Student initialization [none,fc,all]') # 学生模型的初始化方式。'none'	不进行任何初始化，student 从头训练。'fc'只初始化前面的 patch embedding / projection 层。'all'用 teacher checkpoint 初始化整个 student 模型
-    parser.add_argument('--tea_type', default='none', type=str, help='[none,same]') # teacher 的来源方式，same是直接复制 student
+    parser.add_argument('--no_tea_init', action='store_true', help='Without teacher initialization') #  False， teacher 。 --no_tea_init， teacher  checkpoint 
+    parser.add_argument('--init_stu_type', default='none', type=str, help='Student initialization [none,fc,all]') # 。'none'	，student 。'fc' patch embedding / projection 。'all' teacher checkpoint  student 
+    parser.add_argument('--tea_type', default='none', type=str, help='[none,same]') # teacher ，same student
     parser.add_argument('--mm', default=0.9999, type=float, help='Ema decay [0.9997]')
     parser.add_argument('--mm_final', default=1., type=float, help='Final ema decay [1.]')
-    parser.add_argument('--mm_sche', action='store_true', help='Cosine schedule of ema decay') # 启用一个 EMA 衰减系数的 cosine 调度策略
+    parser.add_argument('--mm_sche', action='store_true', help='Cosine schedule of ema decay') #  EMA  cosine 
 
     # Misc
     parser.add_argument('--title', default='default', type=str, help='Title of exp')

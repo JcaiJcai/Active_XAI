@@ -48,7 +48,7 @@ class Generic_WSI_Classification_Dataset(Dataset):
 		label_dict = {},
 		filter_dict = {},
 		ignore=[],
-		patient_strat=False, # 是否按照病人进行划分
+		patient_strat=False, # 
 		label_col = None,
 		patient_voting = 'max',
 		):
@@ -75,8 +75,8 @@ class Generic_WSI_Classification_Dataset(Dataset):
 		slide_data = pd.read_csv(csv_path)
 		# print("csv_path",csv_path)
 		# print("slide_data",slide_data)
-		slide_data = self.filter_df(slide_data, filter_dict) # 根据给定条件过滤数据（如只保留某些类型）
-		slide_data = self.df_prep(slide_data, self.label_dict, ignore, self.label_col) # 标签转换
+		slide_data = self.filter_df(slide_data, filter_dict) # （）
+		slide_data = self.df_prep(slide_data, self.label_dict, ignore, self.label_col) # 
 
 		###shuffle data
 		if shuffle:
@@ -86,27 +86,27 @@ class Generic_WSI_Classification_Dataset(Dataset):
 		self.slide_data = slide_data
 
 		if patient_strat==True:
-			self.patient_data_prep(patient_voting) # 是否按病人聚合标签
-		self.cls_ids_prep() # 为每一类记录其 slide / 病人 索引
+			self.patient_data_prep(patient_voting) # 
+		self.cls_ids_prep() #  slide /  
 
 		if print_info:
 			self.summarize()
 
-	# 按照类别label，为每一类分别记录属于该类的索引列表（IDs）
+	# label，（IDs）
 	def cls_ids_prep(self):
-		# store ids corresponding each class at the patient or case level # 统计病人（case_id）级别每类的索引
+		# store ids corresponding each class at the patient or case level # （case_id）
 		if self.patient_strat==True:
-			self.patient_cls_ids = [[] for i in range(self.num_classes)] # 创建一个长度为类别数的空列表，用于记录每类病人的索引		
+			self.patient_cls_ids = [[] for i in range(self.num_classes)] # ，		
 			for i in range(self.num_classes):
 				self.patient_cls_ids[i] = np.where(self.patient_data['label'] == i)[0] 
     
-		# store ids corresponding each class at the slide level # 统计 slide 级别每类的索引
+		# store ids corresponding each class at the slide level #  slide 
 		self.slide_cls_ids = [[] for i in range(self.num_classes)]
 		for i in range(self.num_classes):
 			self.slide_cls_ids[i] = np.where(self.slide_data['label'] == i)[0]
 
 
-	# 根据同一个 patient（病人）下的多个 slide，生成一个对应的 patient-level 标签（label）
+	#  patient（） slide， patient-level （label）
 	def patient_data_prep(self, patient_voting='max'):
 		patients = np.unique(np.array(self.slide_data['case_id'])) # get unique patients
 		patient_labels = []
@@ -126,23 +126,23 @@ class Generic_WSI_Classification_Dataset(Dataset):
 		self.patient_data = {'case_id':patients, 'label':np.array(patient_labels)}
 
 	@staticmethod
-	# 根据ignore过滤数据
+	# ignore
 	def df_prep(data, label_dict, ignore, label_col):
 		if label_col != 'label':
 			data['label'] = data[label_col].copy()
 
 		mask = data['label'].isin(ignore) 
-		data = data[~mask] # 去掉label在ignore中的样本
-		data.reset_index(drop=True, inplace=True) # 重置 DataFrame 索引
+		data = data[~mask] # labelignore
+		data.reset_index(drop=True, inplace=True) #  DataFrame 
 		for i in data.index:
 			key = data.loc[i, 'label']
-			data.at[i, 'label'] = label_dict[key] # 把字符串标签（如 "LUAD", "LUSC"）转换为数字标签（如 0, 1）
+			data.at[i, 'label'] = label_dict[key] # （ "LUAD", "LUSC"）（ 0, 1）
 		return data
 
-	# 根据filter_dict过滤数据
+	# filter_dict
 	def filter_df(self, df, filter_dict={}):
-		if len(filter_dict) > 0: # 如果过滤条件字典非空，才进行过滤
-			filter_mask = np.full(len(df), True, bool) # 初始化一个全是True的掩码，表示所有行一开始都保留
+		if len(filter_dict) > 0: # ，
+			filter_mask = np.full(len(df), True, bool) # True，
 			# assert 'label' not in filter_dict.keys()
 			for key, val in filter_dict.items():
 				mask = df[key].isin(val)
@@ -169,22 +169,22 @@ class Generic_WSI_Classification_Dataset(Dataset):
 
 	def create_splits(self, k = 3, val_num = (25, 25), test_num = (40, 40), label_frac = 1.0, custom_test_ids = None):
 		settings = {
-					'n_splits' : k, # 要创建多少个fold
+					'n_splits' : k, # fold
 					'val_num' : val_num, 
 					'test_num': test_num,
 					'label_frac': label_frac,
 					'seed': self.seed,
-					'custom_test_ids': custom_test_ids # 自定义的测试样本索引（如指定某些slide为test）
+					'custom_test_ids': custom_test_ids # （slidetest）
 					}
 
-		if self.patient_strat: # 如果以患者为单位 stratify（病人为基本单位）
+		if self.patient_strat: #  stratify（）
 			settings.update({'cls_ids' : self.patient_cls_ids, 'samples': len(self.patient_data['case_id'])})
 		else:
 			settings.update({'cls_ids' : self.slide_cls_ids, 'samples': len(self.slide_data)})
 
 		self.split_gen = generate_split(**settings)
 
-	# 从 self.split_gen 生成器中获取一组划分（train/val/test 的索引），并根据是否是 patient-level stratify 来设置最终的 train_ids、val_ids、test_ids
+	#  self.split_gen （train/val/test ）， patient-level stratify  train_ids、val_ids、test_ids
 	def set_splits(self,start_from=None):
 		if start_from:
 			ids = nth(self.split_gen, start_from)
@@ -195,16 +195,16 @@ class Generic_WSI_Classification_Dataset(Dataset):
 		if self.patient_strat:
 			slide_ids = [[] for i in range(len(ids))] 
 
-			for split in range(len(ids)): # 对应 train，val或者test 
+			for split in range(len(ids)): #  train，valtest 
 				for idx in ids[split]: 
-					case_id = self.patient_data['case_id'][idx] # 病人的ID
-					slide_indices = self.slide_data[self.slide_data['case_id'] == case_id].index.tolist() # 找出这个病人对应的所有 slide（可能有多个），返回其在 self.slide_data 中的索引
-					slide_ids[split].extend(slide_indices) # 将这些 slide 的索引加入当前划分（train/val/test）中
+					case_id = self.patient_data['case_id'][idx] # ID
+					slide_indices = self.slide_data[self.slide_data['case_id'] == case_id].index.tolist() #  slide（）， self.slide_data 
+					slide_ids[split].extend(slide_indices) #  slide （train/val/test）
 
 			self.train_ids, self.val_ids, self.test_ids = slide_ids[0], slide_ids[1], slide_ids[2]
 
 		else:
-			self.train_ids, self.val_ids, self.test_ids = ids # 直接使用原始 slide 索引
+			self.train_ids, self.val_ids, self.test_ids = ids #  slide 
 
 	def get_split_from_df(self, all_splits, use_h5=None, h5_folder_name=None, split_key='train'):
 		split = all_splits[split_key]
@@ -215,7 +215,7 @@ class Generic_WSI_Classification_Dataset(Dataset):
 
 		if len(split) > 0: #########
 			mask = self.slide_data['slide_id2'].isin(split.tolist())
-			# mask = self.slide_data['slide_id'].isin(split.tolist()) # 在 self.slide_data 中找出所有 slide_id 属于 split 列表的行
+			# mask = self.slide_data['slide_id'].isin(split.tolist()) #  self.slide_data  slide_id  split 
 			# print("mask", mask)
 			df_slice = self.slide_data[mask].reset_index(drop=True)
 			split = Generic_Split(df_slice, use_h5=use_h5, h5_folder_name = h5_folder_name, data_dir=self.data_dir, num_classes=self.num_classes)
@@ -243,7 +243,7 @@ class Generic_WSI_Classification_Dataset(Dataset):
 
 
 	def return_splits(self, from_id=True, use_h5=None, h5_folder_name=None, csv_path=None):
-		# 删掉slide_id列，然后把slide_id2列名变为slide_id
+		# slide_id，slide_id2slide_id
 		# print("!!!!self.slide_data",self.slide_data)
 		slide_data = self.slide_data.drop(columns=["slide_id"])
 		slide_data = slide_data.rename(columns={"slide_id2": "slide_id"})
@@ -357,13 +357,13 @@ class Generic_MIL_Dataset(Generic_WSI_Classification_Dataset):
 	
 		super(Generic_MIL_Dataset, self).__init__(**kwargs)
 		self.data_dir = data_dir
-		self.use_h5 = use_h5 # 是否使用.h5文件作为输入的开关，默认使用.pt
+		self.use_h5 = use_h5 # .h5，.pt
 		self.h5_folder_name = h5_folder_name
 
 	# def load_from_h5(self, toggle):
 	# 	self.use_h5 = toggle
 
-	def __getitem__(self, idx): # 返回第 idx 个样本的特征和标签
+	def __getitem__(self, idx): #  idx 
 		slide_id = self.slide_data['slide_id2'][idx]
 		label = self.slide_data['label'][idx]
 		if type(self.data_dir) == dict:
@@ -407,7 +407,7 @@ class Generic_MIL_Dataset(Generic_WSI_Classification_Dataset):
 			return features, label, coords, labels_mask, slide_id2 # -> utils_clam/utils.py -> collate_MIL
 
 	def get_data_by_slide_id(self, slide_id2):
-		# 在 slide_data 中查找对应索引
+		#  slide_data 
 		matches = self.slide_data[self.slide_data['slide_id2'] == slide_id2]
 		if len(matches) == 0:
 			raise ValueError(f"Slide ID {slide_id2} not found in dataset.")

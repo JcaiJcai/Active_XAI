@@ -188,7 +188,7 @@ class DSMIL(nn.Module):
         classes_bag,_ = torch.max(classes, 0) 
 
         if return_attn:
-            # 通过bag和inst综合判断
+            # baginst
             if self.attn_index == 'max':
                 attn,_ = torch.max(classes,-1) if self.cls_attn else torch.max(A,-1)
             else:

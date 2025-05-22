@@ -96,9 +96,9 @@ def train(datasets, cur, args):
     print('\nTraining Fold {}!'.format(cur))
     writer_dir = os.path.join(args.results_dir, str(cur))
     if not os.path.isdir(writer_dir):
-        os.mkdir(writer_dir) # 创建当前 fold 的结果文件夹
+        os.mkdir(writer_dir) #  fold 
 
-    if args.log_data: # 如果开启 --log_data，则用 TensorBoard 记录训练过程
+    if args.log_data: #  --log_data， TensorBoard 
         from tensorboardX import SummaryWriter
         writer = SummaryWriter(writer_dir, flush_secs=15)
 
@@ -114,7 +114,7 @@ def train(datasets, cur, args):
     print("Testing on {} samples".format(len(test_split)))
 
     print('\nInit loss function...', end=' ') 
-    # 决定使用哪种 bag-level 损失：SVM 或交叉熵
+    #  bag-level ：SVM 
     if args.bag_loss == 'svm':
         from topk.svm import SmoothTop1SVM
         loss_fn = SmoothTop1SVM(n_classes = args.n_classes)
@@ -124,7 +124,7 @@ def train(datasets, cur, args):
         loss_fn = nn.CrossEntropyLoss()
     print('Done!')
     
-    # 初始化模型：根据模型类型选择使用 CLAM（Single-branch 或 Multi-branch）或 MIL
+    # ： CLAM（Single-branch  Multi-branch） MIL
     print('\nInit Model...', end=' ')
     model_dict = {"dropout": args.drop_out, 
                   'n_classes': args.n_classes, 
@@ -166,7 +166,7 @@ def train(datasets, cur, args):
     print_network(model)
 
     print('\nInit optimizer ...', end=' ')
-    optimizer = get_optim(model, args) # 配置优化器
+    optimizer = get_optim(model, args) # 
     print('Done!')
     
     print('\nInit Loaders...', end=' ')
@@ -198,7 +198,7 @@ def train(datasets, cur, args):
             break
 
     if args.early_stopping:
-        model.load_state_dict(torch.load(os.path.join(args.results_dir, "s_{}_checkpoint.pt".format(cur)))) # 加载最佳 checkpoint
+        model.load_state_dict(torch.load(os.path.join(args.results_dir, "s_{}_checkpoint.pt".format(cur)))) #  checkpoint
     else:
         torch.save(model.state_dict(), os.path.join(args.results_dir, "s_{}_checkpoint.pt".format(cur)))
 
@@ -214,7 +214,7 @@ def train(datasets, cur, args):
 
         if writer:
             writer.add_scalar('final/test_class_{}_acc'.format(i), acc, 0)
-    # TensorBoard 日志记录
+    # TensorBoard 
     if writer:
         writer.add_scalar('final/val_error', val_error, 0)
         writer.add_scalar('final/val_auc', val_auc, 0)
@@ -226,7 +226,7 @@ def train(datasets, cur, args):
 
 def train_loop_clam(epoch, model, loader, optimizer, n_classes, bag_weight, writer = None, loss_fn = None):
     model.train()
-    # 创建两个准确率记录器：一个用于 bag-level (acc_logger)，一个用于 instance-level (inst_logger)。
+    # ： bag-level (acc_logger)， instance-level (inst_logger)。
     acc_logger = Accuracy_Logger(n_classes=n_classes)
     inst_logger = Accuracy_Logger(n_classes=n_classes)
     
@@ -249,7 +249,7 @@ def train_loop_clam(epoch, model, loader, optimizer, n_classes, bag_weight, writ
         instance_loss_value = instance_loss.item()
         train_inst_loss += instance_loss_value
         
-        total_loss = bag_weight * loss + (1-bag_weight) * instance_loss # 将 slide-level 和 instance-level 的 loss 按照 bag_weight 加权合并，形成最终的 total_loss
+        total_loss = bag_weight * loss + (1-bag_weight) * instance_loss #  slide-level  instance-level  loss  bag_weight ， total_loss
 
         inst_preds = instance_dict['inst_preds']
         inst_labels = instance_dict['inst_labels']

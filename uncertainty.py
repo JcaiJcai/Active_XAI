@@ -58,20 +58,13 @@ def mse_loss(y, alpha, epoch_num, num_classes, annealing_step, device=None):
         device = get_device()
     y = y.to(device)
     alpha = alpha.to(device)
-    loglikelihood = loglikelihood_loss(y, alpha, device=device) # 计算负对数似然损失项
+    loglikelihood = loglikelihood_loss(y, alpha, device=device) # 
 
-    # 计算 KL 散度项的 退火系数
-    # 退火的作用是：前期训练不使用 KL，避免梯度干扰；后期慢慢启用 KL 正则
-    # 当 epoch_num < annealing_step 时，KL 权重是逐渐增长的；超过后固定为 1.0
     annealing_coef = torch.min(
         torch.tensor(1.0, dtype=torch.float32),
         torch.tensor(epoch_num / annealing_step, dtype=torch.float32),
     )
 
-    # 准备 KL 散度中使用的alpha（伪标签替换版本）
-    # 只惩罚非目标类的 evidence
-    # 如果某一类是正确标签（即y=1），这一项就会被重置为 1（Dirichlet 的“无偏先验”）
-    # 这可以防止模型过度惩罚正确类别的高 evidence，提高鲁棒性
     kl_alpha = (alpha - 1) * (1 - y) + 1
     kl_div = annealing_coef * kl_divergence(kl_alpha, num_classes, device=device)
     return loglikelihood + kl_div
@@ -97,8 +90,8 @@ def edl_loss(func, y, alpha, epoch_num, num_classes, annealing_step, device=None
 def edl_mse_loss(output, target, epoch_num, num_classes, annealing_step, device=None):
     if not device:
         device = get_device()
-    evidence = relu_evidence(output) # 用 ReLU 将模型输出 output 转为非负的 evidence 值
-    alpha = evidence + 1 # 生成 Dirichlet 分布的浓度参数alpha
+    evidence = relu_evidence(output)
+    alpha = evidence + 1
     loss = torch.mean(
         mse_loss(target, alpha, epoch_num, num_classes, annealing_step, device=device)
     )

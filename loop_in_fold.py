@@ -52,7 +52,6 @@ def one_fold(args,fold_k,ckc_metric,dataset):
     print("train_dataset",train_dataset)
     print("val_dataset",val_dataset)
     print("test_dataset",test_dataset)
-    # ! Note: Need to check whether we have a fixed seed
     train_loader = get_split_loader(train_dataset, args.batch_size, training=True, testing = args.testing, weighted = args.weighted_sample) # batch_size = 1
     val_loader = get_split_loader(val_dataset, args.batch_size, testing = args.testing)
     test_loader = get_split_loader(test_dataset, args.batch_size, testing = args.testing)
@@ -176,14 +175,13 @@ def one_fold(args,fold_k,ckc_metric,dataset):
     
     for epoch in range(epoch_start, args.num_epoch):
         # ****** TRAIN (Teacher and Student)******
-        # uncertainty: 当前模型计算出来的uncertainty
         train_loss, start, end, fixed_topk_ids, uncertainty = train_loop(args,model,model_tea,train_loader,optimizer,opt_evid, device,amp_autocast,criterion,loss_scaler,scheduler,fold_k,mm_sche,epoch, fixed_topk_ids, opt_uncertainty)
         train_time_meter.update(end-start) # Training time
         
         if args.uncertainty == True:
             if epoch % 10 == 0:
                 print(f"[Epoch {epoch}] fixed_topk_ids:", fixed_topk_ids)
-                print(f"[Epoch {epoch}] uncertainty:", uncertainty) # fixed_topk_ids和uncertainty在固定epoch之后应该保持不变
+                print(f"[Epoch {epoch}] uncertainty:", uncertainty) # fixed_topk_idsuncertaintyepoch
         # ****** EVALUATE (Student) ******
         # stop: whether early stopping was triggered; threshold_optimal: the optimal classification threshold (for binary classification)
         stop,accuracy, auc_value, precision, recall, fscore, test_loss, threshold_optimal = val_loop(args,model,val_loader,device,criterion,early_stopping,epoch,model_tea)
@@ -232,38 +230,37 @@ def one_fold(args,fold_k,ckc_metric,dataset):
             os.mkdir(args.model_path)
             
         best_pt = {
-            'model': model.state_dict(), # student 模型的参数
-            'teacher': model_tea.state_dict() if model_tea is not None else None, # 如果有 teacher 模型，就把它的参数也保存；否则设为 None
+            'model': model.state_dict(), # student model
+            'teacher': model_tea.state_dict() if model_tea is not None else None, 
         }
-        torch.save(best_pt, os.path.join(args.model_path, 'fold_{fold}_model_best_auc.pt'.format(fold=fold_k))) # 保存这组参数到本地文件系统
+        torch.save(best_pt, os.path.join(args.model_path, 'fold_{fold}_model_best_auc.pt'.format(fold=fold_k)))  
         
-        # save checkpoint 保存随机状态（用于完全复现）
         random_state = {
             'np': np.random.get_state(),
             'torch': torch.random.get_rng_state(),
             'py': random.getstate(),
             'loader': train_loader.sampler.generator.get_state() if args.fix_loader_random else '',
         }
-        ckp = { # 构造完整 checkpoint 信息
-            'model': model.state_dict(), # 当前 student 模型参数
-            'lr_sche': scheduler.state_dict(), # 学习率调度器状态
+        ckp = {  
+            'model': model.state_dict(),  
+            'lr_sche': scheduler.state_dict(),  
             'optimizer': optimizer.state_dict(),
-            'epoch': epoch+1, # 当前轮次 +1，resume 时从下轮开始
-            'k': fold_k, # 当前是第几折 fold
-            'early_stop': early_stopping.state_dict(), # # early stopping 的内部状态
+            'epoch': epoch+1, 
+            'k': fold_k, 
+            'early_stop': early_stopping.state_dict(),  
             'random': random_state,
-            'ckc_metric': [acs,pre,rec,fs,auc,te_auc,te_fs], #  # 当前累计的各类交叉验证指标
-            'val_best_metric': [optimal_ac, opt_pre, opt_re, opt_fs, opt_auc,opt_epoch], # 验证集最优结果
-            'te_best_metric': [opt_te_auc,opt_te_fs,opt_te_tea_auc,opt_te_tea_fs], # 测试集最优结果
-            'wandb_id': wandb.run.id if args.wandb else '', # wandb 的 run ID，用于恢复日志连接
+            'ckc_metric': [acs,pre,rec,fs,auc,te_auc,te_fs], 
+            'val_best_metric': [optimal_ac, opt_pre, opt_re, opt_fs, opt_auc,opt_epoch], 
+            'te_best_metric': [opt_te_auc,opt_te_fs,opt_te_tea_auc,opt_te_tea_fs], 
+            'wandb_id': wandb.run.id if args.wandb else '',  
         }
         
         torch.save(ckp, os.path.join(args.model_path, 'ckp.pt'))
         if stop: break
         
-    # 加载当前折的最优模型参数文件，并把它恢复到 student 模型 model 和（如果有）teacher 模型 model_tea 中
-    best_std = torch.load(os.path.join(args.model_path, 'fold_{fold}_model_best_auc.pt'.format(fold=fold_k))) # 加载当前第 k 折交叉验证的最优模型权重文件
-    info = model.load_state_dict(best_std['model']) # 将保存的 student 模型参数加载到当前模型 model 中
+    # ， student  model （）teacher  model_tea 
+    best_std = torch.load(os.path.join(args.model_path, 'fold_{fold}_model_best_auc.pt'.format(fold=fold_k))) #  k 
+    info = model.load_state_dict(best_std['model']) #  student  model 
     print(info)
     if model_tea is not None and best_std['teacher'] is not None:
         info = model_tea.load_state_dict(best_std['teacher'])
@@ -279,25 +276,25 @@ def one_fold(args,fold_k,ckc_metric,dataset):
     fs.append(fscore)
     auc.append(auc_value)
     
-    if args.always_test: # 如果开启 --always_test，也保存额外的测试指标（例如 teacher 的）
+    if args.always_test: #  --always_test，（ teacher ）
         te_auc.append(opt_te_auc)
         te_fs.append(opt_te_fs)
         
     return [acs,pre,rec,fs,auc,te_auc,te_fs]
 
 def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,amp_autocast,criterion,loss_scaler,scheduler,fold_k,mm_sche,epoch, fixed_topk_ids=None, opt_uncertainty=None):
-    # ! opt_uncertainty是用于选topk annotation的
+    # ! opt_uncertaintytopk annotation
     start = time.time()
 
     loss_cls_meter = AverageMeter() # logit loss
     loss_cl_meter = AverageMeter() # cls_loss
-    patch_num_meter = AverageMeter() # 输入的 patch 数
-    keep_num_meter = AverageMeter() # “保留”的 patch 数（例如某些掩码操作后剩下的）
+    patch_num_meter = AverageMeter() #  patch 
+    keep_num_meter = AverageMeter() # “” patch （）
     mm_meter = AverageMeter() # EMA momentum value
     
-    train_loss_log = 0. # 最终返回的平均损失
+    train_loss_log = 0. # 
     
-    # 将主模型和 teacher 模型都设置为训练模式
+    #  teacher 
     model.train()
     if model_tea is not None:
         model_tea.train()
@@ -329,11 +326,11 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
         # data[2]: coords(36710, 2)
         # data[3]: labels_mask(36710,)
         
-        optimizer.zero_grad() # 清除上一个 batch 的梯度
+        optimizer.zero_grad() #  batch 
         if optimizer_teacher is not None:
             optimizer_teacher.zero_grad()
 
-        # bag: 是一个 batch 的 feature（MIL 模型中，一张 WSI = 一个 bag，bag 内有多个 patch）
+        # bag:  batch  feature（MIL ， WSI =  bag，bag  patch）
         bag=data[0].to(device)  # b*n*1024
         if bag.ndim == 2: # if batch_size==1
             bag = bag.unsqueeze(0)
@@ -363,19 +360,19 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                             # Use teacher model to generate prediction and attention
                             alpha, cls_tea, attn = model_tea.forward_teacher_edl(bag)
                             # print("alpha",alpha) # alpha tensor([[1., 1.]], device='cuda:0', grad_fn=<AddBackward0>)
-                            K = alpha.shape[1] # 类别数
-                            S = torch.sum(alpha, dim=1, keepdim=True)  # 每个样本的总证据强度 S_i
+                            K = alpha.shape[1] # 
+                            S = torch.sum(alpha, dim=1, keepdim=True)  #  S_i
                             # print("K,S", K, S) # 2 tensor([[4.7763]], device='cuda:0', grad_fn=<SumBackward1>)
-                            uncertainty = K / (S + 1e-8) # [B, 1] # uncertainty 越大，模型越不确定
+                            uncertainty = K / (S + 1e-8) # [B, 1] # uncertainty ，
                             # print(slide_id2,uncertainty.item())
                             all_uncertainties[slide_id2] = uncertainty.item()
                         else:
                             cls_tea, attn = model_tea.forward_teacher(bag)
                         # attn_sum = attn[1].sum(dim=-1)
                         # print("!!!!!!!attn_sum",attn_sum) # attention is not normalized
-                    elif args.explanation == "shap1": # 用教师模型生成shap解释
+                    elif args.explanation == "shap1": # shap
                         # cls_tea, attn = model_tea.forward_teacher(bag)
-                        # # print("attn",len(attn), attn) # len是2说明这个attention对应的是两层的
+                        # # print("attn",len(attn), attn) # len2attention
                         # attn_avg_lastlayer = attn[-1].mean(dim=1).view(-1)
                         # attn_index = np.argsort(-attn_avg_lastlayer.detach().cpu().numpy())
                         # score = shapley.shapley_value(attn_index, bag, label, model_tea, device, args.baseline, subset_num=10).to(attn[0].device) # (len(search_indices), )
@@ -392,7 +389,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                         if "transmil" in args.teacher_init: model_name = "transmil"
                         elif "dsmil" in args.teacher_init: model_name = "dsmil"
                         elif "abmil" in args.teacher_init: model_name = "abmil"
-                        pt_path = "/u/jcai1/code/usefulxai/paper_results/explanations/"+model_name+"_fold_"+str(fold_k)+"_shap1_2000/"+slide_id2+".pt"
+                        pt_path = "/u/1/code/usefulxai/paper_results/explanations/"+model_name+"_fold_"+str(fold_k)+"_shap1_2000/"+slide_id2+".pt"
                         # print(pt_path)
                         shap_score = torch.load(pt_path, map_location='cpu', weights_only=False)
                         shap_score = list(shap_score.values())[0]
@@ -407,7 +404,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                 # ***** Student Model: Forward *****
                 if args.use_attention_loss == True or args.use_annotation_loss == True:
                     if args.baseline == 'dsmil':
-                        # logits 是 DSMIL 的主类预测 + instance-level 预测。用两个都计算 loss
+                        # logits  DSMIL  + instance-level 。 loss
                         logits, cls_loss, attn_loss, annotation_loss, patch_num, keep_num = model.forward_with_distill_loss(bag,attn,labels_mask,args.anno_loss_type,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
                         logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                     else:
@@ -415,7 +412,7 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                     
                 else:
                     if args.baseline == 'dsmil':
-                        # logits 是 DSMIL 的主类预测 + instance-level 预测。用两个都计算 loss
+                        # logits  DSMIL  + instance-level 。 loss
                         logits, cls_loss,patch_num,keep_num = model(bag,attn,labels_mask,cls_tea[0],i=epoch*len(loader)+i) # !!!!!
                         logit_loss = 0.5*criterion(logits[0].view(batch_size,-1),label) + 0.5*criterion(logits[1].view(batch_size,-1),label)
                     else:
@@ -490,18 +487,18 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
                 value=args.clip_grad, mode='norm')
 
         #if (i+1) % args.accumulation_steps == 0:
-        train_loss.backward() # 对本 batch 的损失 train_loss 进行 反向传播，计算梯度
-        optimizer.step() # 用计算出的梯度对模型参数进行更新（执行一次梯度下降）
+        train_loss.backward() #  batch  train_loss  ，
+        optimizer.step() # （）
         
         with torch.no_grad():
             model.alphas.clamp_(-5.0, 5.0)
         
-        # 如果开启了 --lr_supi（表示 每个 iteration 都要 step 一次学习率），就在这里更新学习率
+        #  --lr_supi（  iteration  step ），
         if args.lr_supi and scheduler is not None:
             scheduler.step()
             
         if args.model == 'mhim':
-            if mm_sche is not None: # 如果传入了 mm_sche（即 EMA momentum 调度器），就根据当前 step（epoch*len(loader)+i）取得当前步的 momentum 值 mm
+            if mm_sche is not None: #  mm_sche（ EMA momentum ）， step（epoch*len(loader)+i） momentum  mm
                 mm = mm_sche[epoch*len(loader)+i]
             else:
                 mm = args.mm
@@ -520,16 +517,16 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
         else:
             mm = 0.
 
-        # 对训练过程中的每个指标做平均
+        # 
         loss_cls_meter.update(logit_loss,1)
         loss_cl_meter.update(cls_loss,1)
         patch_num_meter.update(patch_num,1)
         keep_num_meter.update(keep_num,1)
         mm_meter.update(mm,1)
 
-        # 日志输出（每隔若干步打印）
+        # （）
         if i % args.log_iter == 0 or i == len(loader)-1:
-            # 获取当前学习率（如果 optimizer 里有多个 param group，就取平均）
+            # （ optimizer  param group，）
             lrl = [param_group['lr'] for param_group in optimizer.param_groups]
             lr = sum(lrl) / len(lrl)
             rowd = OrderedDict([
@@ -546,11 +543,11 @@ def train_loop(args,model,model_tea,loader,optimizer,optimizer_teacher,device,am
 
 
     end = time.time()
-    train_loss_log = train_loss_log/len(loader) # 整轮平均训练损失
-    if not args.lr_supi and scheduler is not None: # 如果不是按 step 更新，而是按 epoch 更新，就在 epoch 末尾 step 一次
+    train_loss_log = train_loss_log/len(loader) # 
+    if not args.lr_supi and scheduler is not None: #  step ， epoch ， epoch  step 
         scheduler.step()
     
-    # !返回的all_uncertainties是逐时更新的，我们不用这个来选topk_ids，因为直接用fixed_topk_ids
+    # !all_uncertainties，topk_ids，fixed_topk_ids
     return train_loss_log,start,end, topk_ids, all_uncertainties
 
 def val_loop(args,model,loader,device,criterion,early_stopping,epoch,model_tea=None):
@@ -560,7 +557,7 @@ def val_loop(args,model,loader,device,criterion,early_stopping,epoch,model_tea=N
     loss_cls_meter = AverageMeter()
     bag_logit, bag_labels=[], []
 
-    with torch.no_grad(): # 禁用梯度计算，以节省内存和加快验证速度
+    with torch.no_grad(): # ，
         for i, data in enumerate(loader):
             if len(data[1]) > 1:
                 bag_labels.extend(data[1].tolist())
@@ -569,12 +566,12 @@ def val_loop(args,model,loader,device,criterion,early_stopping,epoch,model_tea=N
 
             bag=data[0].to(device)  # b*n*1024
             # print("bag", bag.shape)
-            if bag.ndim == 2: # 如果batch_size=1的话
+            if bag.ndim == 2: # batch_size=1
                 bag = bag.unsqueeze(0)
             batch_size=bag.size(0)
 
             label=data[1].to(device)
-            # 对不同类型模型进行推理
+            # 
             if args.model in ('mhim','pure'):
                 test_logits = model.forward_test(bag)
                 if args.baseline == 'dsmil':
@@ -584,8 +581,8 @@ def val_loop(args,model,loader,device,criterion,early_stopping,epoch,model_tea=N
             else:
                 test_logits = model(bag)
 
-            # 计算 loss + 获取预测概率
-            if args.loss == 'ce': # 交叉熵损失
+            #  loss + 
+            if args.loss == 'ce': # 
                 if (args.model == 'dsmil' and args.ds_average) or (args.model == 'mhim' and isinstance(test_logits,(list,tuple))) or (args.model == 'pure' and args.baseline == 'dsmil'):
                     test_loss = criterion(test_logits[0].view(batch_size,-1),label)
                     bag_logit.append((0.5*torch.softmax(test_logits[1],dim=-1)+0.5*torch.softmax(test_logits[0],dim=-1))[:,1].cpu().squeeze().numpy())
@@ -604,15 +601,15 @@ def val_loop(args,model,loader,device,criterion,early_stopping,epoch,model_tea=N
                     
                     bag_logit.append(torch.sigmoid(test_logits).cpu().squeeze().numpy())
 
-            loss_cls_meter.update(test_loss,1) # 更新损失统计器
+            loss_cls_meter.update(test_loss,1) # 
     
-    # save the log file # 计算最终评估指标
+    # save the log file # 
     # print("1111111",bag_labels, bag_logit)
     accuracy, auc_value, precision, recall, fscore, threshold_optimal = five_scores(bag_labels, bag_logit)
     
     # early stop 
     if early_stopping is not None:
-        # 根据当前的 AUC 值判断是否要提前停止（AUC 越大越好，因此要用 -auc 做最小化监控）
+        #  AUC （AUC ， -auc ）
         early_stopping(epoch,-auc_value,model)
         stop = early_stopping.early_stop
     else:
@@ -636,7 +633,7 @@ def test(args,model,loader,device,criterion,model_tea=None,opt_thr=None):
                 
             bag=data[0].to(device)  # b*n*1024
             # print("bag", bag.shape)
-            if bag.ndim == 2: # 如果batch_size=1的话
+            if bag.ndim == 2: # batch_size=1
                 bag = bag.unsqueeze(0)
             batch_size=bag.size(0)
 
@@ -646,14 +643,14 @@ def test(args,model,loader,device,criterion,model_tea=None,opt_thr=None):
                 if args.baseline == 'dsmil':
                     test_logits = test_logits[0]
             elif args.model == 'dsmil':
-                test_logits,_ = model(bag) # dsmil 返回两个输出（instance-level 和 bag-level），这里只用 bag-level
+                test_logits,_ = model(bag) # dsmil （instance-level  bag-level）， bag-level
             else:
                 test_logits = model(bag)
 
             if args.loss == 'ce':
                 if (args.model == 'dsmil' and args.ds_average) or (args.model == 'mhim' and isinstance(test_logits,(list,tuple)))or (args.model == 'pure' and args.baseline == 'dsmil'):
                     test_loss = criterion(test_logits[0].view(batch_size,-1),label)
-                    # 使用 DSMIL 或类似双预测头的模型时，对两个 logits 求 softmax，然后平均预测
+                    #  DSMIL ， logits  softmax，
                     bag_logit.append((0.5*torch.softmax(test_logits[1],dim=-1)+0.5*torch.softmax(test_logits[0],dim=-1))[:,1].cpu().squeeze().numpy())
                 else:
                     test_loss = criterion(test_logits.view(batch_size,-1),label)
@@ -662,7 +659,7 @@ def test(args,model,loader,device,criterion,model_tea=None,opt_thr=None):
                     else:
                         bag_logit.append(torch.softmax(test_logits,dim=-1)[:,1].cpu().squeeze().numpy())
             elif args.loss == 'bce':
-                if args.model == 'dsmil' and args.ds_average: # DSMIL 且使用双头平均
+                if args.model == 'dsmil' and args.ds_average: # DSMIL 
                     test_loss = criterion(test_logits[0].view(batch_size,-1),label)
                     bag_logit.append((0.5*torch.sigmoid(test_logits[1])+0.5*torch.sigmoid(test_logits[0]).cpu().squeeze().numpy()))
                 else:
@@ -673,9 +670,9 @@ def test(args,model,loader,device,criterion,model_tea=None,opt_thr=None):
     
     # save the log file
     # cal the best thr with val set
-    opt_thr = opt_thr if args.best_thr_val else None # 是否使用验证集算出的最佳阈值
+    opt_thr = opt_thr if args.best_thr_val else None # 
     
-    # 计算各类指标和loss
+    # loss
     accuracy, auc_value, precision, recall, fscore, _ = five_scores(bag_labels, bag_logit,threshold_optimal=opt_thr)
     test_loss_log = test_loss_log/len(loader)
 
