@@ -15,14 +15,14 @@ def parse_arguments():
     parser.add_argument('--fold_start', default=0, type=int, help='Start validation fold [0]')
     parser.add_argument('--persistence', action='store_true', help='Load data into memory') 
     parser.add_argument('--same_psize', default=0, type=int, help='Keep the same size of all patches [0]') # 是否强制让所有 patch 保持相同的尺寸
-    parser.add_argument('--k_fold', type=int, default=10, help='number of folds (default: 10)') # Jie # 交叉验证（cross-validation）要分几折（fold），默认是 3/10 折
-    parser.add_argument('--k_start', type=int, default=-1, help='start fold (default: -1, last fold)') # Jie
-    parser.add_argument('--k_end', type=int, default=-1, help='end fold (default: -1, first fold)') # Jie
-    parser.add_argument('--split_dir', type=str, default=None, # Jie
+    parser.add_argument('--k_fold', type=int, default=10, help='number of folds (default: 10)') # 交叉验证（cross-validation）要分几折（fold），默认是 3/10 折
+    parser.add_argument('--k_start', type=int, default=-1, help='start fold (default: -1, last fold)')
+    parser.add_argument('--k_end', type=int, default=-1, help='end fold (default: -1, first fold)') # 
+    parser.add_argument('--split_dir', type=str, default=None, # 
                     help='manually specify the set of splits to use, ' 
                     +'instead of infering from the task and label_frac argument (default: None)')
-    # parser.add_argument('--task', type=str, choices=['task_1_tumor_vs_normal',  'task_2_tumor_subtyping']) # Jie
-    parser.add_argument('--label_frac', type=float, default=1.0, # Jie
+    # parser.add_argument('--task', type=str, choices=['task_1_tumor_vs_normal',  'task_2_tumor_subtyping']) # 
+    parser.add_argument('--label_frac', type=float, default=1.0, # 
                     help='fraction of training labels (default: 1.0)')
     parser.add_argument('--device', type=str, default='cuda:0', help='Device to use: e.g., "cuda:0" or "cpu"')
 
@@ -41,7 +41,7 @@ def parse_arguments():
     parser.add_argument('--seed', default=2021, type=int, help='random number [2021]' )
     parser.add_argument('--always_test', action='store_true', help='Test model in the training phase') # train的时候每轮都要test
     parser.add_argument('--best_thr_val', action='store_true', help='Cal the best thr with val set in the test phase.')
-    parser.add_argument('--testing', action='store_true', default=False, help='debugging tool') # Jie
+    parser.add_argument('--testing', action='store_true', default=False, help='debugging tool') # 
     parser.add_argument('--weighted_sample', action='store_true', default=False, help='enable weighted sampling') 
     
     

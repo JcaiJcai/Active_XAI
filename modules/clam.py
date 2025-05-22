@@ -113,7 +113,7 @@ class CLAM_SB(nn.Module):
         instance_classifiers = [nn.Linear(size[1], 2) for i in range(n_classes)]
         self.instance_classifiers = nn.ModuleList(instance_classifiers)
         self.k_sample = k_sample
-        self.instance_loss_fn = SmoothTop1SVM(2).to(device) # Jie .cuda()
+        self.instance_loss_fn = SmoothTop1SVM(2).to(device) #  .cuda()
         # self.instance_loss_fn = nn.CrossEntropyLoss()
         self.n_classes = n_classes
         self.subtyping = subtyping
